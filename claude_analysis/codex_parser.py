@@ -22,8 +22,10 @@ import json
 import os
 from pathlib import Path
 
+from collections import Counter
+
 from . import pricing, prmatch
-from .repos import normalize_git_url, resolve_repo_name
+from .repos import resolve_session_repository
 from .util import file_ext, parse_apply_patch, parse_ts
 
 SOURCE = "codex"
@@ -292,13 +294,16 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         if found["repos"]:
             ev["referenced_repository"] = found["repos"][0]
 
-    # resolve repository once, stamp every event (mined owner/repo is the
-    # last-resort fallback when there's no git remote or cwd)
-    repository = normalize_git_url(repository_url) if repository_url else resolve_repo_name(cwd)
-    if not repository:
-        mined = [ev["referenced_repository"] for ev in events if ev.get("referenced_repository")]
-        if mined:
-            repository = max(set(mined), key=mined.count)
+    # resolve repository once, stamp every event. Codex's git remote (from
+    # session_meta) is authoritative; otherwise fall back to the cwd reconciled
+    # with mined owner/repo references, most-frequent first.
+    ref_counts = Counter(ev["referenced_repository"] for ev in events if ev.get("referenced_repository"))
+    candidates = [r for r, _ in ref_counts.most_common()]
+    repository = resolve_session_repository(
+        candidate_repositories=candidates,
+        git_repository_url=repository_url,
+        cwd=cwd,
+    )
     for ev in events:
         ev["repository"] = repository
 

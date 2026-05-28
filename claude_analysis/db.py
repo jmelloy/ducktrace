@@ -212,31 +212,61 @@ class Store:
         self._session_buf.clear()
 
     def canonicalize_repositories(self) -> list[tuple[str, str]]:
-        """Promote bare repo names (e.g. ``dnsid``, from a worktree session with
-        no pr-link or git remote) to their canonical ``owner/repo`` form when
-        exactly one canonical match exists. Ambiguous names are left untouched.
-        Returns the list of (bare -> canonical) mappings applied."""
+        """Promote bare repo names to a canonical ``owner/repo`` form.
+
+        A bare name (e.g. ``dnsid``, or a subdir leaf like ``backend``) is
+        upgraded when an ``owner/repo`` seen elsewhere in the data unambiguously
+        matches — either the bare name itself, or a segment of the session's cwd
+        path (so a session working in ``…/pioneer-square/backend`` resolves to
+        ``jmelloy/pioneer-square``). Repo-parts mapping to more than one owner are
+        left untouched. Returns the (bare -> canonical) mappings applied."""
+        from pathlib import PurePosixPath
+
         self.flush()
-        rows = self.con.execute(
-            """
-            WITH bare AS (
-                SELECT DISTINCT repository AS name FROM sessions
-                WHERE repository IS NOT NULL AND repository <> '' AND repository NOT LIKE '%/%'
-            ),
-            canon AS (
-                SELECT b.name, c.repository AS canonical
-                FROM bare b
-                JOIN (SELECT DISTINCT repository FROM sessions WHERE repository LIKE '%/%') c
-                  ON c.repository LIKE '%/' || b.name
-            )
-            SELECT name, min(canonical) AS canonical
-            FROM canon GROUP BY name HAVING count(DISTINCT canonical) = 1
-            """
+        applied: list[tuple[str, str]] = []
+
+        # 0) Unify case variants of the same owner/repo (GitHub is
+        # case-insensitive; a lowercase URL the agent typed can otherwise split a
+        # repo in two). Canonical casing = the variant used by the most sessions.
+        variants: dict[str, list] = {}
+        for full, n in self.con.execute(
+            "SELECT repository, count(*) FROM sessions WHERE repository LIKE '%/%' GROUP BY 1"
+        ).fetchall():
+            variants.setdefault(full.lower(), []).append((full, n))
+        for group in variants.values():
+            if len(group) < 2:
+                continue
+            canonical = max(group, key=lambda v: (v[1], any(c.isupper() for c in v[0])))[0]
+            for full, _ in group:
+                if full != canonical:
+                    self.con.execute("UPDATE sessions SET repository=? WHERE repository=?", [canonical, full])
+                    self.con.execute("UPDATE events SET repository=? WHERE repository=?", [canonical, full])
+                    applied.append((full, canonical))
+
+        # repo-part (segment after the slash) -> owner/repo, only when unique.
+        part_to_full: dict[str, set] = {}
+        for (full,) in self.con.execute(
+            "SELECT DISTINCT repository FROM sessions WHERE repository LIKE '%/%'"
+        ).fetchall():
+            part_to_full.setdefault(full.split("/")[-1].lower(), set()).add(full)
+        canon = {p: next(iter(s)) for p, s in part_to_full.items() if len(s) == 1}
+        bare = self.con.execute(
+            """SELECT session_id, repository, cwd FROM sessions
+               WHERE repository IS NOT NULL AND repository <> '' AND repository NOT LIKE '%/%'"""
         ).fetchall()
-        for bare, canonical in rows:
-            self.con.execute("UPDATE sessions SET repository = ? WHERE repository = ?", [canonical, bare])
-            self.con.execute("UPDATE events SET repository = ? WHERE repository = ?", [canonical, bare])
-        return rows
+        for sid, repo, cwd in bare:
+            target = canon.get(repo.lower())
+            if target is None and cwd:
+                # deepest path segment first, so a subdir's own repo wins
+                for seg in reversed([s.lower() for s in PurePosixPath(cwd).parts]):
+                    if seg in canon:
+                        target = canon[seg]
+                        break
+            if target and target != repo:
+                self.con.execute("UPDATE sessions SET repository=? WHERE session_id=?", [target, sid])
+                self.con.execute("UPDATE events SET repository=? WHERE session_id=?", [target, sid])
+                applied.append((repo, target))
+        return applied
 
     def close(self) -> None:
         self.flush()

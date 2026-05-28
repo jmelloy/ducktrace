@@ -156,8 +156,9 @@ def main() -> None:
     if not args.no_canonicalize:
         mapped = store.canonicalize_repositories()
         if mapped and not args.quiet:
-            print(f"\nCanonicalized {len(mapped)} repo name(s):", file=sys.stderr)
-            for bare, canonical in mapped:
+            pairs = sorted(set(mapped))
+            print(f"\nCanonicalized {len(mapped)} session(s), {len(pairs)} name(s):", file=sys.stderr)
+            for bare, canonical in pairs:
                 print(f"  {bare} -> {canonical}", file=sys.stderr)
 
     store.close()

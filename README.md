@@ -40,12 +40,16 @@ reworked into a small Python package.
   each with a `…[+N chars]` marker. Pass `--keep-full-text` to store everything
   verbatim (lossless).
 - **Repository attribution** (strongest signal first):
-  1. GitHub `owner/repo` from a Claude `pr-link` (`prRepository`) or a Codex
-     `session_meta.git.repository_url` (credentials stripped, `.git` removed);
-  2. a git worktree's original working dir (Claude `worktree-state`);
-  3. the session's most-frequent `cwd`, with on-disk worktree resolution
-     (a `.git` *file* pointing into `…/.git/worktrees/<name>` → parent repo
-     directory name).
+  1. A Codex `session_meta.git.repository_url` → `owner/repo` (credentials
+     stripped, `.git` removed) — the cwd's actual git remote.
+  2. A Claude `pr-link` (`prRepository`) **only when it agrees with the working
+     directory** — i.e. its repo name is the cwd's name or a path segment of it
+     (the session may work in a subdir like `<repo>/backend`). Claude Code
+     records a pr-link for *any* PR URL it sees in the session, which can point
+     at an unrelated repo, so a pr-link that disagrees with the cwd is ignored.
+  3. The session's working directory (`worktree-state` original cwd, else the
+     most-frequent `cwd`), with on-disk worktree resolution (a `.git` *file*
+     pointing into `…/.git/worktrees/<name>` → parent repo directory name).
 
   After import, a canonicalization pass promotes a bare repo name (e.g. a
   worktree session that only knew `dnsid`) to its `owner/repo` form when
