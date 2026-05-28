@@ -106,16 +106,6 @@ def main() -> None:
         ["source", "tool", "calls"],
         ["{}", "{}", "{:,}"])
 
-    _rule("PR ACTIVITY")
-    _table(con,
-        """SELECT source, pr_action, count(*)
-           FROM events WHERE pr_action IS NOT NULL
-           GROUP BY 1,2 ORDER BY 3 DESC LIMIT 12""",
-        ["source", "pr action", "count"],
-        ["{}", "{}", "{:,}"])
-    npr = con.execute("SELECT count(DISTINCT pr_number) FROM events WHERE pr_number IS NOT NULL").fetchone()[0]
-    print(f"\n  Distinct PRs referenced: {npr:,}")
-
     _rule("TOP SESSIONS (by cost)")
     _table(con,
         """SELECT coalesce(title,'(untitled)'), source, coalesce(repository,''),

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 from . import pricing, prmatch
@@ -162,12 +163,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             model_counts[msg["model"]] = model_counts.get(msg["model"], 0) + 1
 
     main_cwd = max(cwd_counts, key=cwd_counts.get) if cwd_counts else ""
-    repository = resolve_session_repository(
-        pr_repositories=pr_repositories,
-        original_cwd=original_cwd,
-        cwd=main_cwd,
-    )
     main_model = max(model_counts, key=model_counts.get) if model_counts else ""
+    # repository is resolved after pass 2, once command/URL-mined repo references
+    # (referenced_repository) are available to combine with the cwd.
 
     # --- pass 2: emit events --------------------------------------------------
     events: list[dict] = []
@@ -196,7 +194,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             "model": (e.get("message") or {}).get("model") if isinstance(e.get("message"), dict) else None,
             "cwd": e.get("cwd"),
             "git_branch": e.get("gitBranch"),
-            "repository": repository,
+            "repository": None,  # resolved + stamped after mining (see below)
             "file_path": None,
             "file_ext": None,
             "lines_added": None,
@@ -329,14 +327,21 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 _attach_usage(ev, e, msg, main_model)
             events.append(ev)
 
-    # Fallback: a session with no cwd/pr-link/worktree signal still gets a repo
-    # from a mined owner/repo reference (e.g. a `gh pr ... --repo X` command).
-    if not repository:
-        mined = [ev["referenced_repository"] for ev in events if ev.get("referenced_repository")]
-        if mined:
-            repository = max(set(mined), key=mined.count)
-            for ev in events:
-                ev["repository"] = repository
+    # Resolve the repository now that we've mined owner/repo references from the
+    # session's own commands/output (referenced_repository), and combine them
+    # with the structured pr-link repos, most-frequent first. The cwd decides
+    # which of these is real (see resolve_session_repository).
+    ref_counts = Counter(ev["referenced_repository"] for ev in events if ev.get("referenced_repository"))
+    for r in pr_repositories:
+        ref_counts[r] += 1
+    candidates = [r for r, _ in ref_counts.most_common()]
+    repository = resolve_session_repository(
+        candidate_repositories=candidates,
+        original_cwd=original_cwd,
+        cwd=main_cwd,
+    )
+    for ev in events:
+        ev["repository"] = repository
 
     # --- per-file session metadata (aggregated once per session in build) -----
     meta = {

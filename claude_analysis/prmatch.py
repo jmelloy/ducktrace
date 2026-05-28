@@ -22,6 +22,11 @@ _GH_PR_RE = re.compile(
 )
 _REPO_FLAG_RE = re.compile(r"--repo[ =]\s*['\"]?([^\s'\"]+)", re.I)
 _PULL_URL_RE = re.compile(r"https?://github\.com/([^/\s]+/[^/\s]+?)/pull/(\d+)", re.I)
+# Any GitHub repo reference: https URL, ssh remote (git@github.com:o/r), or a
+# bare github.com/o/r — covers `git remote`, `git clone`, `gh repo view`, etc.
+# The trailing lookahead stops before path/punctuation so we capture just owner/repo.
+_REPO_URL_RE = re.compile(
+    r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?(?=[/\s)\"'`,]|$)", re.I)
 
 
 # Documentation/example placeholders that are not real repositories.
@@ -77,6 +82,10 @@ def extract(*texts: str) -> dict:
         for m in _REPO_FLAG_RE.finditer(text):
             r = _normalize_repo_flag(m.group(1))
             if r:
+                repos.append(r)
+        for m in _REPO_URL_RE.finditer(text):
+            r = m.group(1).removesuffix(".git")
+            if not _is_placeholder(r):
                 repos.append(r)
     return {
         "pr_actions": _dedup(actions),
