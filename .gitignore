@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Data store (regenerate with build_db.py)
+data/
+*.duckdb
+*.duckdb.wal
+
+# Local tooling / secrets
+.claude/settings.local.json
+.DS_Store
