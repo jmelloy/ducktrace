@@ -1,8 +1,7 @@
 """Roll a session's event rows up into a single session row.
 
-Token/cost totals sum over events. build_db._dedup_usage strips token fields
-from all but the last event per message_id before this runs, so sessions that
-span multiple files (resumes, sub-agents) don't multiply-count API calls.
+Token/cost totals sum over events. Only "usage carrier" events (one per
+model turn) carry token columns, so summation never double-counts.
 """
 
 from __future__ import annotations
@@ -10,8 +9,7 @@ from __future__ import annotations
 
 def aggregate_session(session_id: str, path: str, source: str, events: list[dict], **meta) -> dict:
     def _sum(col):
-        vals = [v for ev in events if (v := ev.get(col)) is not None]
-        return sum(vals) if vals else None
+        return sum(ev.get(col) or 0 for ev in events)
 
     timestamps = [ev["timestamp"] for ev in events if ev.get("timestamp")]
     started = min(timestamps) if timestamps else None
@@ -75,7 +73,7 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
         "cache_read_tokens": cr,
         "cache_creation_tokens": cc,
         "reasoning_tokens": reasoning,
-        "total_tokens": sum(v for v in [inp, out, cr, cc, reasoning] if v is not None),
+        "total_tokens": inp + out + cr + cc + reasoning,
         "stated_cost": _sum("stated_cost"),
         "inferred_cost": _sum("inferred_cost"),
         "pr_repositories": sorted(pr_repos),

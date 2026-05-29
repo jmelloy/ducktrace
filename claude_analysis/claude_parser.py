@@ -54,41 +54,6 @@ def _tok_count(text: str) -> int:
         return 0
 
 
-def _count_output_tokens(content) -> int | None:
-    """Return total output token count across assistant content blocks, or None
-    if the tokenizer is unavailable (caller falls back to the API value).
-
-    Only text, tool_use, and thinking blocks are counted — tool_result blocks
-    belong to the user turn and must not be included here.
-    """
-    tok = _get_tokenizer()
-    if tok is None:
-        return None
-    if isinstance(content, str):
-        return _tok_count(content)
-    if not isinstance(content, list):
-        return None
-    total = 0
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        btype = block.get("type", "")
-        if btype == "text":
-            total += _tok_count(block.get("text") or "")
-        elif btype == "tool_use":
-            name = block.get("name") or ""
-            inp = block.get("input") or {}
-            # Approximation: the API serializes tool calls in an internal format
-            # we cannot replicate exactly; name + JSON input is a best-effort proxy.
-            total += _tok_count(name + " " + json.dumps(inp))
-        elif btype == "thinking":
-            # The thinking field contains the actual thinking text as a plain
-            # string (not base64). Redacted/encrypted thinking blocks have
-            # type "redacted_thinking" and are not captured here.
-            total += _tok_count(block.get("thinking") or "")
-    return total
-
-
 def _count_input_tokens(content) -> int | None:
     """Return token count for user message content, or None if tokenizer unavailable.
 
@@ -362,8 +327,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["subtype"] = "text"
             ev["text"] = content
             ev["attributes"] = {"line": line_meta, "message": msg_meta, "block": content}
-            if t == "user":
-                ev["input_tokens"] = _count_input_tokens(content)
+            ev["input_tokens"] = _count_input_tokens(content)
             _attach_usage(ev, e, msg, main_model)
             mine(ev)
             events.append(ev)
@@ -374,8 +338,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev = base_event(lineno, e)
             ev["role"] = t
             ev["attributes"] = {"line": line_meta, "message": msg_meta}
-            if t == "user":
-                ev["input_tokens"] = _count_input_tokens(content)
+            ev["input_tokens"] = _count_input_tokens(content)
             _attach_usage(ev, e, msg, main_model)
             events.append(ev)
             continue
@@ -427,52 +390,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = btype
                 ev["text"] = block.get("text") if isinstance(block, dict) else None
 
-            if i == 0:
-                if t == "user":
-                    ev["input_tokens"] = _count_input_tokens(content)
-                _attach_usage(ev, e, msg, main_model)
             events.append(ev)
-
-    # Thread input_tokens from each user event onto the assistant event that
-    # consumed it. The assistant's usage block is the complete picture for a
-    # turn (cache breakdown, output, cost); the estimated input count belongs
-    # there too so all per-turn token data is on one record. Moving (not
-    # copying) avoids double-counting in aggregate_session.
-    #
-    # parent_id doesn't always point directly to a user event: attachment
-    # events can sit between the user message and the first assistant response,
-    # forming a chain user → attachment → ... → assistant. Walk up the chain
-    # (bounded) to find the nearest user ancestor.
-    ev_by_uuid: dict[str, dict] = {}
-    for ev in events:
-        if (ev.get("block_index") or 0) == 0:
-            base = (ev.get("event_id") or "").split("#")[0]
-            if base:
-                ev_by_uuid[base] = ev
-
-    user_input_by_uuid: dict[str, dict] = {}
-    for ev in events:
-        if ev.get("type") == "user" and (ev.get("block_index") or 0) == 0:
-            base = (ev.get("event_id") or "").split("#")[0]
-            if base:
-                user_input_by_uuid[base] = ev
-
-    def _nearest_user_input(parent_id: str | None, depth: int = 0) -> dict | None:
-        if not parent_id or depth > 10:
-            return None
-        if parent_id in user_input_by_uuid:
-            return user_input_by_uuid[parent_id]
-        ancestor = ev_by_uuid.get(parent_id)
-        if ancestor is None:
-            return None
-        return _nearest_user_input(ancestor.get("parent_id"), depth + 1)
-
-    for ev in events:
-        if ev.get("type") == "assistant" and (ev.get("block_index") or 0) == 0:
-            user_ev = _nearest_user_input(ev.get("parent_id"))
-            if user_ev is not None and user_ev.get("input_tokens") is not None:
-                ev["input_tokens"] = user_ev["input_tokens"]
-                user_ev["input_tokens"] = None
+        else:
+            _attach_usage(events[-1], e, msg, main_model)  # attach usage to last block if not already
 
     # Resolve the repository now that we've mined owner/repo references from the
     # session's own commands/output (referenced_repository), and combine them
@@ -527,11 +447,11 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     model = msg.get("model") or fallback_model
     # input_tokens is threaded forward from the user event after the loop; use
     # API value here only for cost calculation.
-    inp = usage.get("input_tokens", 0) or 0
+    inp = ev.get("input_tokens") or usage.get("input_tokens", 0) or 0
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
-    computed_out = _count_output_tokens(msg.get("content"))
-    out = computed_out if computed_out is not None else (usage.get("output_tokens", 0) or 0)
+    
+    out = usage.get("output_tokens", 0) 
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr
