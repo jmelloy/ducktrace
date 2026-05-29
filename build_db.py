@@ -150,15 +150,17 @@ def main() -> None:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
+    db_path = Path(args.db).expanduser()
+    if args.reset and db_path.exists():
+        db_path.unlink()
+
     store = Store(
-        str(Path(args.db).expanduser()),
+        str(db_path),
         max_text=args.max_text,
         max_field=args.max_field,
         keep_full_text=args.keep_full_text,
         pop_used=not args.keep_used_attributes,
     )
-    if args.reset:
-        store.reset()
 
     start = time.time()
     seen_files = store.get_seen_files()
