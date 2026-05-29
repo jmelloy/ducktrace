@@ -146,7 +146,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             "cache_read_tokens": None,
             "cache_creation_tokens": None,
             "reasoning_tokens": None,
-            "cost_usd": None,
+            "stated_cost": None,
+            "inferred_cost": None,
             "text": None,
             "attributes": None,
         }
@@ -376,4 +377,4 @@ def _attach_codex_tokens(ev: dict, payload: dict, model: str, last_total: dict |
     ev["cache_creation_tokens"] = max(0, d_cc)
     ev["cache_read_tokens"] = max(0, d_cr)
     ev["reasoning_tokens"] = max(0, d_reason)
-    ev["cost_usd"] = pricing.codex_cost(model, max(0, d_in), max(0, d_cr), max(0, d_out))
+    ev["inferred_cost"] = pricing.codex_cost(model, max(0, d_in), max(0, d_cr), max(0, d_out))

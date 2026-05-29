@@ -208,7 +208,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             "cache_read_tokens": None,
             "cache_creation_tokens": None,
             "reasoning_tokens": None,
-            "cost_usd": None,
+            "stated_cost": None,
+            "inferred_cost": None,
             "text": None,
             "attributes": None,
         }
@@ -386,5 +387,5 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr
-    cost_usd = e.get("costUSD")
-    ev["cost_usd"] = pricing.claude_cost(model, inp, out, cc, cr, cost_usd=cost_usd, mode="auto")
+    ev["stated_cost"] = e.get("costUSD") or None
+    ev["inferred_cost"] = pricing.claude_cost(model, inp, out, cc, cr)
