@@ -315,6 +315,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         if found["repos"]:
             ev["referenced_repository"] = found["repos"][0]
 
+    event_parent_map = {}
+
     for lineno, e in lines:
         t = e.get("type")
         msg = e.get("message") if isinstance(e.get("message"), dict) else None
@@ -342,7 +344,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["text"] = e.get("agentName")
             elif t in ("last-prompt",):
                 ev["text"] = e.get("lastPrompt")
-            ev["reasoning_tokens"] = _estimate_thinking_tokens(content) if content else None
+            ev["reasoning_tokens"] = _estimate_thinking_tokens([content]) if content else None
             events.append(ev)
             continue
 
@@ -354,9 +356,10 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["text"] = content
             ev["attributes"] = {"line": line_meta, "message": msg_meta, "block": content}
             ev["input_tokens"] = _count_input_tokens(content)
-            _attach_usage(ev, e, msg, main_model)
+            _attach_usage(ev, e, msg, main_model, parent=event_parent_map.get(ev["parent_id"]))
             mine(ev)
             events.append(ev)
+            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  # track all events for this message for later token rolling
             continue
 
         # message line with a list of content blocks
@@ -366,8 +369,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["attributes"] = {"line": line_meta, "message": msg_meta}
             ev["input_tokens"] = _count_input_tokens(content)
             ev["reasoning_tokens"] = _estimate_thinking_tokens(content)
-            _attach_usage(ev, e, msg, main_model)
+            _attach_usage(ev, e, msg, main_model, parent=event_parent_map.get(ev["parent_id"]))
             events.append(ev)
+            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  # track all events for this message for later token rolling
             continue
 
         tool_use_result = e.get("toolUseResult")
@@ -421,11 +425,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             else:
                 ev["role"] = btype
                 ev["text"] = block.get("text") if isinstance(block, dict) else None
-
+            event_parent_map[ev["event_id"].split("#")[0]] = event_parent_map.get(ev["event_id"].split("#")[0], [])  + [ev]  # track all events for this message for later token rolling
+            _attach_usage(ev, e, msg, main_model, parent=event_parent_map.get(ev["parent_id"], [])) 
             events.append(ev)
-        else:
-            _attach_usage(events[-1], e, msg, main_model)  # attach usage to last block if not already
-            
 
     # Resolve the repository now that we've mined owner/repo references from the
     # session's own commands/output (referenced_repository), and combine them
@@ -451,10 +453,12 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
     for (message_id, request_id), ev_list in event_usage.items():
         if len(ev_list) <= 1:
             continue
+        input_tokens = sum(ev.get("input_tokens") or 0 for ev in ev_list)
         
+        final = ev_list[-1]
         for i, ev in enumerate(ev_list):
-            if i != len(ev_list) - 1:
-                
+            if i > 0:
+                ev["input_tokens"] = None
                 ev["output_tokens"] = None
                 ev["cache_read_tokens"] = None
                 ev["cache_creation_tokens"] = None
@@ -463,7 +467,20 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["inferred_cost"] = None
                 if "usage" in ev["attributes"]["message"]:
                     ev["attributes"]["message"].pop("usage", None)  # also clear from raw JSON to avoid 
-
+            else:
+                ev["input_tokens"] = input_tokens  # roll input tokens forward to last event in the group, where cost is attributed
+                ev["output_tokens"] = final.get("output_tokens")
+                ev["cache_read_tokens"] = final.get("cache_read_tokens")
+                ev["cache_creation_tokens"] = final.get("cache_creation_tokens")
+                ev["stated_cost"] = final.get("stated_cost")
+                
+                ev["inferred_cost"] = pricing.claude_cost(
+                    ev.get("model") or main_model,
+                    input_tokens,
+                    ev.get("output_tokens") or 0,
+                    ev.get("cache_creation_tokens") or 0,
+                    ev.get("cache_read_tokens") or 0,
+                )
     # --- per-file session metadata (aggregated once per session in build) -----
     meta = {
         "session_id": session_id,
@@ -491,7 +508,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
     return meta, events
 
 
-def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> None:
+def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str, parent: list[dict | None]) -> None:
     """Attach token + cost columns from an assistant message's usage block."""
     if e.get("type") != "assistant" or not msg:
         return
@@ -501,11 +518,21 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     model = msg.get("model") or fallback_model
     # input_tokens is threaded forward from the user event after the loop; use
     # API value here only for cost calculation.
+    
     inp = ev.get("input_tokens") or usage.get("input_tokens", 0) or 0
+    if inp == 1:
+        inp = 0 # claude weirdness
+    if parent:
+        for p in parent:
+            if p and p.get("input_tokens") is not None:
+                inp += p["input_tokens"]
+                p["input_tokens"] = None  # clear from parent to avoid double counting
+
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
     
     out = usage.get("output_tokens", 0) 
+    ev["input_tokens"] = inp
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr

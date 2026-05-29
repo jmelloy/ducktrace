@@ -14,7 +14,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from claude_analysis import claude_parser, parse_file
+from claude_analysis import claude_parser
 
 
 def _fmt(n: int | float | None) -> str:
@@ -79,7 +79,7 @@ def main() -> None:
 
     for f in candidates:
         try:
-            result = parse_file(f)
+            result = claude_parser.parse_file(f)
         except Exception as exc:
             print(f"  parse error {f}: {exc}", file=sys.stderr)
             continue
