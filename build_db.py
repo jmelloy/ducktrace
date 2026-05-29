@@ -35,6 +35,31 @@ _META_KEYS = (
     "pr_repositories", "pr_numbers", "extra_attributes",
 )
 
+_USAGE_FIELDS = (
+    "input_tokens", "output_tokens", "cache_read_tokens",
+    "cache_creation_tokens", "reasoning_tokens", "stated_cost", "inferred_cost",
+)
+
+
+def _dedup_usage(evs: list[dict]) -> None:
+    """When multiple events share a message_id (same API response replayed into
+    several JSONL files), only the last one should carry usage data. Zero out
+    token/cost fields on all earlier occurrences so aggregate_session doesn't
+    multiply-count them. 'Last' is by seq (line number) then event_id for
+    stability across files."""
+    by_mid: dict[str, list[int]] = defaultdict(list)
+    for i, ev in enumerate(evs):
+        mid = ev.get("message_id")
+        if mid is not None:
+            by_mid[mid].append(i)
+    for indices in by_mid.values():
+        if len(indices) <= 1:
+            continue
+        indices.sort(key=lambda i: (evs[i].get("seq") or 0, evs[i].get("event_id") or ""))
+        for i in indices[:-1]:
+            for field in _USAGE_FIELDS:
+                evs[i][field] = None
+
 
 def _better_repo(a: str, b: str) -> str:
     """Prefer a canonical owner/repo over a bare name, else any non-empty."""
@@ -185,6 +210,7 @@ def main() -> None:
     total_e = 0
     for sid, bucket in events_by.items():
         evs = list(bucket.values())
+        _dedup_usage(evs)
         m = meta_by[sid]
         repository = m.get("repository") or ""
         for ev in evs:  # re-stamp so events agree with the merged session repo

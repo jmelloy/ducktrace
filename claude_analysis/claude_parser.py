@@ -54,7 +54,7 @@ def _tok_count(text: str) -> int:
         return 0
 
 
-def _count_content_tokens(content) -> int | None:
+def _count_output_tokens(content) -> int | None:
     """Return total output token count across assistant content blocks, or None
     if the tokenizer is unavailable (caller falls back to the API value).
 
@@ -86,6 +86,37 @@ def _count_content_tokens(content) -> int | None:
             # string (not base64). Redacted/encrypted thinking blocks have
             # type "redacted_thinking" and are not captured here.
             total += _tok_count(block.get("thinking") or "")
+    return total
+
+
+def _count_input_tokens(content) -> int | None:
+    """Return token count for user message content, or None if tokenizer unavailable.
+
+    Counts text blocks and tool_result content (text sub-blocks only — images
+    and other binary payloads cannot be tokenized).
+    """
+    tok = _get_tokenizer()
+    if tok is None:
+        return None
+    if isinstance(content, str):
+        return _tok_count(content)
+    if not isinstance(content, list):
+        return None
+    total = 0
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type", "")
+        if btype == "text":
+            total += _tok_count(block.get("text") or "")
+        elif btype == "tool_result":
+            result_content = block.get("content")
+            if isinstance(result_content, str):
+                total += _tok_count(result_content)
+            elif isinstance(result_content, list):
+                for sub in result_content:
+                    if isinstance(sub, dict) and sub.get("type") == "text":
+                        total += _tok_count(sub.get("text") or "")
     return total
 
 
@@ -331,6 +362,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["subtype"] = "text"
             ev["text"] = content
             ev["attributes"] = {"line": line_meta, "message": msg_meta, "block": content}
+            if t == "user":
+                ev["input_tokens"] = _count_input_tokens(content)
             _attach_usage(ev, e, msg, main_model)
             mine(ev)
             events.append(ev)
@@ -341,6 +374,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev = base_event(lineno, e)
             ev["role"] = t
             ev["attributes"] = {"line": line_meta, "message": msg_meta}
+            if t == "user":
+                ev["input_tokens"] = _count_input_tokens(content)
             _attach_usage(ev, e, msg, main_model)
             events.append(ev)
             continue
@@ -393,6 +428,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["text"] = block.get("text") if isinstance(block, dict) else None
 
             if i == 0:
+                if t == "user":
+                    ev["input_tokens"] = _count_input_tokens(content)
                 _attach_usage(ev, e, msg, main_model)
             events.append(ev)
 
@@ -447,12 +484,12 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     if not isinstance(usage, dict):
         return
     model = msg.get("model") or fallback_model
+    # input_tokens stays on the user event; use API value only for cost calculation.
     inp = usage.get("input_tokens", 0) or 0
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
-    computed_out = _count_content_tokens(msg.get("content"))
+    computed_out = _count_output_tokens(msg.get("content"))
     out = computed_out if computed_out is not None else (usage.get("output_tokens", 0) or 0)
-    ev["input_tokens"] = inp
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr

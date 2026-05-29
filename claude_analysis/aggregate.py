@@ -1,7 +1,8 @@
 """Roll a session's event rows up into a single session row.
 
-Token/cost totals sum over events. Only "usage carrier" events (one per
-model turn) carry token columns, so summation never double-counts.
+Token/cost totals sum over events. build_db._dedup_usage strips token fields
+from all but the last event per message_id before this runs, so sessions that
+span multiple files (resumes, sub-agents) don't multiply-count API calls.
 """
 
 from __future__ import annotations
