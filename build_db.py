@@ -185,7 +185,6 @@ def main() -> None:
     total_e = 0
     for sid, bucket in events_by.items():
         evs = list(bucket.values())
-        _dedup_usage(evs)
         m = meta_by[sid]
         repository = m.get("repository") or ""
         for ev in evs:  # re-stamp so events agree with the merged session repo
