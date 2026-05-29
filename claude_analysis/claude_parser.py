@@ -433,6 +433,47 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 _attach_usage(ev, e, msg, main_model)
             events.append(ev)
 
+    # Thread input_tokens from each user event onto the assistant event that
+    # consumed it. The assistant's usage block is the complete picture for a
+    # turn (cache breakdown, output, cost); the estimated input count belongs
+    # there too so all per-turn token data is on one record. Moving (not
+    # copying) avoids double-counting in aggregate_session.
+    #
+    # parent_id doesn't always point directly to a user event: attachment
+    # events can sit between the user message and the first assistant response,
+    # forming a chain user → attachment → ... → assistant. Walk up the chain
+    # (bounded) to find the nearest user ancestor.
+    ev_by_uuid: dict[str, dict] = {}
+    for ev in events:
+        if (ev.get("block_index") or 0) == 0:
+            base = (ev.get("event_id") or "").split("#")[0]
+            if base:
+                ev_by_uuid[base] = ev
+
+    user_input_by_uuid: dict[str, dict] = {}
+    for ev in events:
+        if ev.get("type") == "user" and (ev.get("block_index") or 0) == 0:
+            base = (ev.get("event_id") or "").split("#")[0]
+            if base:
+                user_input_by_uuid[base] = ev
+
+    def _nearest_user_input(parent_id: str | None, depth: int = 0) -> dict | None:
+        if not parent_id or depth > 10:
+            return None
+        if parent_id in user_input_by_uuid:
+            return user_input_by_uuid[parent_id]
+        ancestor = ev_by_uuid.get(parent_id)
+        if ancestor is None:
+            return None
+        return _nearest_user_input(ancestor.get("parent_id"), depth + 1)
+
+    for ev in events:
+        if ev.get("type") == "assistant" and (ev.get("block_index") or 0) == 0:
+            user_ev = _nearest_user_input(ev.get("parent_id"))
+            if user_ev is not None and user_ev.get("input_tokens") is not None:
+                ev["input_tokens"] = user_ev["input_tokens"]
+                user_ev["input_tokens"] = None
+
     # Resolve the repository now that we've mined owner/repo references from the
     # session's own commands/output (referenced_repository), and combine them
     # with the structured pr-link repos, most-frequent first. The cwd decides
@@ -484,7 +525,8 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     if not isinstance(usage, dict):
         return
     model = msg.get("model") or fallback_model
-    # input_tokens stays on the user event; use API value only for cost calculation.
+    # input_tokens is threaded forward from the user event after the loop; use
+    # API value here only for cost calculation.
     inp = usage.get("input_tokens", 0) or 0
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
