@@ -10,7 +10,8 @@ from __future__ import annotations
 
 def aggregate_session(session_id: str, path: str, source: str, events: list[dict], **meta) -> dict:
     def _sum(col):
-        return sum(ev.get(col) or 0 for ev in events)
+        vals = [v for ev in events if (v := ev.get(col)) is not None]
+        return sum(vals) if vals else None
 
     timestamps = [ev["timestamp"] for ev in events if ev.get("timestamp")]
     started = min(timestamps) if timestamps else None
@@ -74,7 +75,7 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
         "cache_read_tokens": cr,
         "cache_creation_tokens": cc,
         "reasoning_tokens": reasoning,
-        "total_tokens": inp + out + cr + cc + reasoning,
+        "total_tokens": sum(v for v in [inp, out, cr, cc, reasoning] if v is not None),
         "stated_cost": _sum("stated_cost"),
         "inferred_cost": _sum("inferred_cost"),
         "pr_repositories": sorted(pr_repos),

@@ -24,7 +24,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from claude_analysis import claude_parser, codex_parser
+from claude_analysis import claude_parser, codex_parser, pricing
 from claude_analysis.aggregate import aggregate_session
 from claude_analysis.db import Store
 
@@ -42,23 +42,62 @@ _USAGE_FIELDS = (
 
 
 def _dedup_usage(evs: list[dict]) -> None:
-    """When multiple events share a message_id (same API response replayed into
-    several JSONL files), only the last one should carry usage data. Zero out
-    token/cost fields on all earlier occurrences so aggregate_session doesn't
-    multiply-count them. 'Last' is by seq (line number) then event_id for
-    stability across files."""
+    """When multiple events share a message_id (multi-block message or cross-file
+    replay), insert a synthetic event (event_id = message_id) and zero the fields
+    that belong to it on the originals.
+
+    Synthetic carries:
+      - input_tokens: sum across blocks (the threaded user-request value lands on
+        whichever block the parser happened to pick; we don't assume it's block 0)
+      - cache_read/creation_tokens: first non-None across blocks (API value, same
+        on every line of the same message)
+      - inferred_cost: recalculated from the full per-message totals
+      - output_tokens: None — output stays on the individual block events so
+        aggregate_session can sum them normally
+
+    Originals keep output_tokens; everything else in _USAGE_FIELDS is zeroed so
+    aggregate_session doesn't double-count."""
     by_mid: dict[str, list[int]] = defaultdict(list)
     for i, ev in enumerate(evs):
         mid = ev.get("message_id")
         if mid is not None:
             by_mid[mid].append(i)
-    for indices in by_mid.values():
+    for mid, indices in by_mid.items():
         if len(indices) <= 1:
             continue
-        indices.sort(key=lambda i: (evs[i].get("seq") or 0, evs[i].get("event_id") or ""))
-        for i in indices[:-1]:
+
+        def _first(field):
+            return next((evs[i][field] for i in indices if evs[i].get(field) is not None), None)
+
+        def _total(field):
+            vals = [evs[i][field] for i in indices if evs[i].get(field) is not None]
+            return sum(vals) if vals else None
+
+        inp = _total("input_tokens")
+        out = _total("output_tokens")
+        cr  = _first("cache_read_tokens")
+        cc  = _first("cache_creation_tokens")
+        model = _first("model")
+
+        inferred = pricing.claude_cost(model or "", inp or 0, out or 0, cc or 0, cr or 0) or None
+
+        for i in indices:
             for field in _USAGE_FIELDS:
-                evs[i][field] = None
+                if field != "output_tokens":
+                    evs[i][field] = None
+
+        evs.append({
+            "event_id": mid, "message_id": mid, "type": "usage", "role": "usage",
+            "request_id": _first("request_id"),
+            "seq": max(evs[i].get("seq") or 0 for i in indices) or None,
+            "input_tokens": inp,
+            "output_tokens": None,
+            "cache_read_tokens": cr,
+            "cache_creation_tokens": cc,
+            "reasoning_tokens": None,
+            "stated_cost": _first("stated_cost"),
+            "inferred_cost": inferred,
+        })
 
 
 def _better_repo(a: str, b: str) -> str:
@@ -214,6 +253,8 @@ def main() -> None:
         m = meta_by[sid]
         repository = m.get("repository") or ""
         for ev in evs:  # re-stamp so events agree with the merged session repo
+            ev["session_id"] = sid
+            ev["source"] = m["source"]
             ev["repository"] = repository
         title = m.get("custom_title") or m.get("ai_title") or None
         session = aggregate_session(
