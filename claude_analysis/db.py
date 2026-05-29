@@ -58,7 +58,8 @@ EVENT_COLUMNS: dict[str, str] = {
     "cache_read_tokens": "BIGINT",
     "cache_creation_tokens": "BIGINT",
     "reasoning_tokens": "BIGINT",
-    "cost_usd": "DOUBLE",
+    "stated_cost": "DOUBLE",        # costUSD from the JSONL line (when present)
+    "inferred_cost": "DOUBLE",      # computed from token counts + pricing table
     "text": "VARCHAR",              # extracted body/text (may be large)
     "attributes": "JSON",           # full raw entry (lossless)
 }
@@ -90,7 +91,8 @@ SESSION_COLUMNS: dict[str, str] = {
     "cache_creation_tokens": "BIGINT",
     "reasoning_tokens": "BIGINT",
     "total_tokens": "BIGINT",
-    "cost_usd": "DOUBLE",
+    "stated_cost": "DOUBLE",        # sum of stated_cost across events
+    "inferred_cost": "DOUBLE",      # sum of inferred_cost across events
     "pr_repositories": "JSON",      # list of owner/repo seen via pr-link
     "pr_numbers": "JSON",           # list of PR numbers
     "attributes": "JSON",           # extra session metadata (worktree, cwd_counts, …)

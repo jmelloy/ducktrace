@@ -5,8 +5,8 @@ Ported from ../ai-observer/backend/internal/pricing. Rates are USD per token
 
 Cost model:
   * Claude: input + output + cache-read + cache-creation, each at its own rate.
-            If the JSONL line carries a ``costUSD`` we prefer it (PRICING_MODE
-            "auto"); otherwise we compute from tokens.
+            ``claude_cost`` always computes from tokens. The caller is responsible
+            for also capturing ``costUSD`` from the JSONL as ``stated_cost``.
   * Codex:  input (non-cached) + cache-read + output. Codex reports *cumulative*
             token counts, so the caller passes per-turn deltas.
 """
@@ -167,22 +167,11 @@ def claude_cost(
     output_tokens: int,
     cache_creation_tokens: int,
     cache_read_tokens: int,
-    cost_usd: float | None = None,
-    mode: str = "auto",
 ) -> float:
-    """Cost for a Claude assistant turn.
-
-    mode="auto" (default): use ``cost_usd`` from the JSONL when present and > 0,
-    else compute from tokens. mode="calculate": always from tokens.
-    mode="display": always use ``cost_usd`` (0 if missing).
-    """
-    if mode == "display":
-        return cost_usd or 0.0
-    if mode == "auto" and cost_usd is not None and cost_usd > 0:
-        return cost_usd
+    """Cost for a Claude assistant turn computed from token counts."""
     p = claude_pricing(model)
     if p is None:
-        return cost_usd or 0.0 if mode == "auto" else 0.0
+        return 0.0
     return (
         max(0, input_tokens) * p.input
         + max(0, output_tokens) * p.output
