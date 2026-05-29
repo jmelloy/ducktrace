@@ -345,6 +345,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             elif t in ("last-prompt",):
                 ev["text"] = e.get("lastPrompt")
             ev["reasoning_tokens"] = _estimate_thinking_tokens([content]) if content else None
+            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  
             events.append(ev)
             continue
 
@@ -356,7 +357,11 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["text"] = content
             ev["attributes"] = {"line": line_meta, "message": msg_meta, "block": content}
             ev["input_tokens"] = _count_input_tokens(content)
-            _attach_usage(ev, e, msg, main_model, parent=event_parent_map.get(ev["parent_id"]))
+            parent_list = event_parent_map.get(ev["parent_id"], [])
+            while len(parent_list) == 1 and parent_list[0].get("input_tokens") is None and parent_list[0]["parent_id"] is not None:
+                parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
+
+            _attach_usage(ev, e, msg, main_model, parent=parent_list)
             mine(ev)
             events.append(ev)
             event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  # track all events for this message for later token rolling
@@ -369,7 +374,10 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["attributes"] = {"line": line_meta, "message": msg_meta}
             ev["input_tokens"] = _count_input_tokens(content)
             ev["reasoning_tokens"] = _estimate_thinking_tokens(content)
-            _attach_usage(ev, e, msg, main_model, parent=event_parent_map.get(ev["parent_id"]))
+            parent_list = event_parent_map.get(ev["parent_id"], [])
+            while len(parent_list) == 1 and parent_list[0].get("input_tokens") is None and parent_list[0]["parent_id"] is not None:
+                parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
+            _attach_usage(ev, e, msg, main_model, parent=parent_list)
             events.append(ev)
             event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  # track all events for this message for later token rolling
             continue
@@ -407,11 +415,12 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["text"] = f"Tool call: {block.get('name')}"
                 mine(ev, cmd)  # the Bash command, not the placeholder text
             elif btype == "tool_result":
+                print(block)
                 ev["role"] = "tool_result"
                 ev["tool_use_id"] = block.get("tool_use_id")
                 ev["text"] = _content_text(block.get("content"))
                 
-                ev["input_tokens"] = _count_input_tokens(block.get("content"))
+                # ev["input_tokens"] = _count_input_tokens(block.get("content"))
                 
                 # Attribute the result to a file when the structured result names one,
                 # but leave line counts on the tool_use event to avoid double counting.
@@ -426,7 +435,10 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = btype
                 ev["text"] = block.get("text") if isinstance(block, dict) else None
             event_parent_map[ev["event_id"].split("#")[0]] = event_parent_map.get(ev["event_id"].split("#")[0], [])  + [ev]  # track all events for this message for later token rolling
-            _attach_usage(ev, e, msg, main_model, parent=event_parent_map.get(ev["parent_id"], [])) 
+            parent_list = event_parent_map.get(ev["parent_id"], [])
+            while len(parent_list) == 1 and parent_list[0].get("input_tokens") is None and parent_list[0]["parent_id"] is not None:
+                parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
+            _attach_usage(ev, e, msg, main_model, parent=parent_list) 
             events.append(ev)
 
     # Resolve the repository now that we've mined owner/repo references from the
