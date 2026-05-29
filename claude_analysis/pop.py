@@ -5,8 +5,9 @@ not yet lifted into a column — which makes it much easier to see what's still
 unmodelled and decide what to promote next. Anything reconstructable from a
 column (ids, types, timestamps, cwd/branch, model, tool name/role, token counts)
 is removed, as is the body text that now lives in the ``text`` column.
-Genuinely un-promoted data (tool inputs, apply_patch bodies, ``stop_reason``,
-``isSidechain``, ``turn_id``, …) is kept.
+Genuinely un-promoted data
+(tool inputs, apply_patch bodies, ``stop_reason``, ``isSidechain``,
+``turn_id``, …) is kept.
 
 Pass ``keep_used=True`` (CLI ``--keep-used-attributes``) to skip popping and
 keep the fuller JSON.

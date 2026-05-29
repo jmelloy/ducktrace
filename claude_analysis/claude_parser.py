@@ -41,12 +41,11 @@ def _estimate_thinking_tokens(content) -> int:
         btype = block.get("type", "")
         if btype == "thinking":
             text = block.get("thinking") or ""
-            total += len(text) // 4
+            total += max(1, len(text) // 4) if text else 0
         elif btype == "redacted_thinking":
-            # base64 → bytes (×3/4), then bytes → tokens (÷4 at ~4 bytes/token)
+            # data is base64; convert to approximate byte length then to tokens
             data = block.get("data") or ""
-            byte_count = len(data) * 3 // 4
-            total += byte_count // 4
+            total += max(1, len(data) * 3 // 4 // 4) if data else 0
     return total
 
 
@@ -417,8 +416,9 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr
-    # Thinking tokens are not broken out by the API; estimate from thinking blocks.
+    # Thinking tokens are not broken out by the API; estimate from content blocks.
     thinking_est = _estimate_thinking_tokens(msg.get("content"))
-    ev["reasoning_tokens"] = thinking_est or None
+    if thinking_est:
+        ev["reasoning_tokens"] = thinking_est
     ev["stated_cost"] = e.get("costUSD") or None
     ev["inferred_cost"] = pricing.claude_cost(model, inp, out, cc, cr)
