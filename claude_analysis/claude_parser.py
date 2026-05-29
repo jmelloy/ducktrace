@@ -32,6 +32,8 @@ def _estimate_thinking_tokens(content) -> int:
     All other block types are skipped — their token counts come from the
     API-reported output_tokens value and must not be double-counted here.
     """
+    # Non-list content (plain string from older API shapes, or None/missing) contains
+    # no thinking blocks; return 0 immediately rather than iterating.
     if not isinstance(content, list):
         return 0
     total = 0
@@ -43,7 +45,10 @@ def _estimate_thinking_tokens(content) -> int:
             text = block.get("thinking") or ""
             total += len(text) // 4
         elif btype == "redacted_thinking":
-            # base64 → bytes (×3/4), then bytes → tokens (÷4 at ~4 bytes/token)
+            # base64 → bytes (×3/4), then bytes → tokens (÷4 at ~4 bytes/token).
+            # This is a rough lower-bound estimate with high uncertainty: the data is
+            # encrypted/binary, not natural-language text, so the actual bytes-per-token
+            # ratio is unknown and the result may significantly underestimate true usage.
             data = block.get("data") or ""
             byte_count = len(data) * 3 // 4
             total += byte_count // 4
