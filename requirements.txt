@@ -1,2 +1,3 @@
 duckdb>=1.0
 pyarrow>=14.0
+anthropic>=0.40.0

@@ -4,9 +4,8 @@ After this runs, ``attributes`` holds only the *remainder* — the bits we have
 not yet lifted into a column — which makes it much easier to see what's still
 unmodelled and decide what to promote next. Anything reconstructable from a
 column (ids, types, timestamps, cwd/branch, model, tool name/role) is removed,
-as is the body text that now lives in the ``text`` column. For ``usage``, only
-the four token fields lifted into typed columns are removed; extra fields
-(service_tier, billed_units, …) are preserved. Genuinely un-promoted data
+as is the body text that now lives in the ``text`` column. The ``usage`` block
+is kept intact so that raw token counts remain inspectable. Genuinely un-promoted data
 (tool inputs, apply_patch bodies, ``stop_reason``, ``isSidechain``,
 ``turn_id``, …) is kept.
 
@@ -20,9 +19,6 @@ from __future__ import annotations
 _CLAUDE_LINE = {"type", "timestamp", "sessionId", "uuid", "parentUuid",
                 "requestId", "cwd", "gitBranch"}
 _CLAUDE_MSG = {"id", "model"}
-# Only the usage subfields that were lifted into typed columns; the rest stays.
-_CLAUDE_USAGE = {"input_tokens", "output_tokens",
-                 "cache_creation_input_tokens", "cache_read_input_tokens"}
 _CLAUDE_BLOCK_STRUCT = {"type", "id", "tool_use_id", "name"}
 _CLAUDE_BLOCK_TEXT = {"text", "thinking", "content"}  # now in the `text` column
 
@@ -57,11 +53,6 @@ def pop_used_event(ev: dict) -> dict:
         if a.keys() & {"line", "message", "block"}:
             _pop_keys(a.get("line"), _CLAUDE_LINE)
             _pop_keys(a.get("message"), _CLAUDE_MSG)
-            usage = (a.get("message") or {}).get("usage")
-            if isinstance(usage, dict):
-                _pop_keys(usage, _CLAUDE_USAGE)
-                if not usage:
-                    a.get("message", {}).pop("usage", None)
             block = a.get("block")
             if isinstance(block, str):
                 a.pop("block", None)  # plain user text -> `text` column

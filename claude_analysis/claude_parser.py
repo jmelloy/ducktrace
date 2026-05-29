@@ -21,6 +21,78 @@ from .util import count_lines, file_ext, parse_ts
 
 SOURCE = "claude"
 
+# ---------------------------------------------------------------------------
+# Tokenizer (optional; falls back to API-reported counts when unavailable)
+# ---------------------------------------------------------------------------
+_tok = None
+_tok_unavailable = False
+
+
+def _get_tokenizer():
+    """Lazy-load the Anthropic tokenizer (local, no API call required)."""
+    global _tok, _tok_unavailable
+    if _tok_unavailable:
+        return None
+    if _tok is not None:
+        return _tok
+    try:
+        import os
+        import anthropic as _anthropic
+        key = os.environ.get("ANTHROPIC_API_KEY", "placeholder")
+        _tok = _anthropic.Anthropic(api_key=key).get_tokenizer()
+    except Exception:
+        _tok_unavailable = True
+        return None
+    return _tok
+
+
+def _tok_count(text: str) -> int:
+    tok = _get_tokenizer()
+    if tok is None or not text:
+        return 0
+    try:
+        return len(tok.encode(text).ids)
+    except Exception:
+        return 0
+
+
+def _count_content_tokens(content) -> int | None:
+    """Return total token count across all content blocks, or None if the
+    tokenizer is unavailable (caller should fall back to the API value)."""
+    tok = _get_tokenizer()
+    if tok is None:
+        return None
+    if isinstance(content, str):
+        return _tok_count(content)
+    if not isinstance(content, list):
+        return None
+    total = 0
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type", "")
+        if btype == "text":
+            total += _tok_count(block.get("text") or "")
+        elif btype == "tool_use":
+            name = block.get("name") or ""
+            inp = block.get("input") or {}
+            total += _tok_count(name + " " + json.dumps(inp))
+        elif btype == "tool_result":
+            c = block.get("content") or ""
+            if isinstance(c, str):
+                total += _tok_count(c)
+            elif isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and b.get("type") == "text":
+                        total += _tok_count(b.get("text") or "")
+        elif btype == "thinking":
+            # Thinking text is stored as base64-encoded data; estimate tokens
+            # from byte length (base64 → bytes → ~4 bytes/token).
+            b64 = block.get("thinking") or ""
+            total += len(b64) * 3 // 4 // 4
+    return total
+
+
 # Tools whose inputs describe a file edit, and where to find the file path.
 _EDIT_TOOLS = {"Edit", "str_replace", "str_replace_based_edit_tool"}
 _WRITE_TOOLS = {"Write", "write_file", "create", "create_file"}
@@ -380,9 +452,10 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
         return
     model = msg.get("model") or fallback_model
     inp = usage.get("input_tokens", 0) or 0
-    out = usage.get("output_tokens", 0) or 0
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
+    computed_out = _count_content_tokens(msg.get("content"))
+    out = computed_out if computed_out is not None else (usage.get("output_tokens", 0) or 0)
     ev["input_tokens"] = inp
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
