@@ -419,6 +419,6 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     ev["cache_read_tokens"] = cr
     # Thinking tokens are not broken out by the API; estimate from thinking blocks.
     thinking_est = _estimate_thinking_tokens(msg.get("content"))
-    ev["reasoning_tokens"] = thinking_est
+    ev["reasoning_tokens"] = thinking_est or None
     ev["stated_cost"] = e.get("costUSD") or None
     ev["inferred_cost"] = pricing.claude_cost(model, inp, out, cc, cr)
