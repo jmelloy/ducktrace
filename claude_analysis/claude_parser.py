@@ -53,6 +53,31 @@ def _tok_count(text: str) -> int:
     except Exception:
         return 0
 
+def _estimate_thinking_tokens(content) -> int:
+    """Estimate token count for thinking/redacted_thinking blocks only.
+
+    `thinking` blocks expose plain text — we use char count ÷ 4 as a rough 
+    heuristic (~4 chars per token on average).  `redacted_thinking` blocks
+    expose only base64-encoded encrypted data; we convert to estimated byte
+    count first (base64 len × 3/4), then divide by 4 bytes/token.
+    All other block types are skipped — their token counts come from the 
+    API-reported output_tokens value and must not be double-counted here.
+    """
+    if not isinstance(content, list): 
+        return 0 
+    total = 0 
+    for block in content:
+        if not isinstance(block, dict): 
+            continue
+        btype = block.get("type", "") 
+        if btype == "thinking":
+            text = block.get("thinking") or ""
+            total += max(1, len(text) // 4) if text else 0
+        elif btype == "redacted_thinking":
+            # data is base64; convert to approximate byte length then to tokens
+            data = block.get("data") or "" 
+            total += max(1, len(data) * 3 // 4 // 4) if data else 0
+    return total
 
 def _count_input_tokens(content) -> int | None:
     """Return token count for user message content, or None if tokenizer unavailable.
@@ -317,6 +342,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["text"] = e.get("agentName")
             elif t in ("last-prompt",):
                 ev["text"] = e.get("lastPrompt")
+            ev["reasoning_tokens"] = _estimate_thinking_tokens(content) if content else None
             events.append(ev)
             continue
 
@@ -339,6 +365,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["role"] = t
             ev["attributes"] = {"line": line_meta, "message": msg_meta}
             ev["input_tokens"] = _count_input_tokens(content)
+            ev["reasoning_tokens"] = _estimate_thinking_tokens(content)
             _attach_usage(ev, e, msg, main_model)
             events.append(ev)
             continue
@@ -353,9 +380,11 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             if btype == "thinking":
                 ev["role"] = t
                 ev["text"] = block.get("thinking", "")
+                ev["reasoning_tokens"] = _estimate_thinking_tokens([block])
             elif btype == "text":
                 ev["role"] = t
                 ev["text"] = block.get("text", "")
+                ev["input_tokens"] = _count_input_tokens(block.get("text", ""))
                 mine(ev)
             elif btype == "tool_use":
                 ev["role"] = "tool_use"
@@ -377,6 +406,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = "tool_result"
                 ev["tool_use_id"] = block.get("tool_use_id")
                 ev["text"] = _content_text(block.get("content"))
+                
+                ev["input_tokens"] = _count_input_tokens(block.get("content"))
+                
                 # Attribute the result to a file when the structured result names one,
                 # but leave line counts on the tool_use event to avoid double counting.
                 if isinstance(tool_use_result, dict):
@@ -393,6 +425,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             events.append(ev)
         else:
             _attach_usage(events[-1], e, msg, main_model)  # attach usage to last block if not already
+            
 
     # Resolve the repository now that we've mined owner/repo references from the
     # session's own commands/output (referenced_repository), and combine them
@@ -407,8 +440,29 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         original_cwd=original_cwd,
         cwd=main_cwd,
     )
+
+    event_usage = {}
+
     for ev in events:
+        if ev["message_id"] and ev["request_id"]:
+            event_usage[ev["message_id"], ev["request_id"]] = event_usage.get((ev["message_id"], ev["request_id"]), []) + [ev]
         ev["repository"] = repository
+
+    for (message_id, request_id), ev_list in event_usage.items():
+        if len(ev_list) <= 1:
+            continue
+        
+        for i, ev in enumerate(ev_list):
+            if i != len(ev_list) - 1:
+                
+                ev["output_tokens"] = None
+                ev["cache_read_tokens"] = None
+                ev["cache_creation_tokens"] = None
+                ev["reasoning_tokens"] = None
+                ev["stated_cost"] = None
+                ev["inferred_cost"] = None
+                if "usage" in ev["attributes"]["message"]:
+                    ev["attributes"]["message"].pop("usage", None)  # also clear from raw JSON to avoid 
 
     # --- per-file session metadata (aggregated once per session in build) -----
     meta = {
