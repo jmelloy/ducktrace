@@ -29,17 +29,15 @@ _tok_unavailable = False
 
 
 def _get_tokenizer():
-    """Lazy-load the Anthropic tokenizer (local, no API call required)."""
+    """Lazy-load the Claude tokenizer directly from the tokenizers library."""
     global _tok, _tok_unavailable
     if _tok_unavailable:
         return None
     if _tok is not None:
         return _tok
     try:
-        import os
-        import anthropic as _anthropic
-        key = os.environ.get("ANTHROPIC_API_KEY", "placeholder")
-        _tok = _anthropic.Anthropic(api_key=key).get_tokenizer()
+        from tokenizers import Tokenizer
+        _tok = Tokenizer.from_pretrained("Xenova/claude-tokenizer")
     except Exception:
         _tok_unavailable = True
         return None
@@ -57,8 +55,12 @@ def _tok_count(text: str) -> int:
 
 
 def _count_content_tokens(content) -> int | None:
-    """Return total token count across all content blocks, or None if the
-    tokenizer is unavailable (caller should fall back to the API value)."""
+    """Return total output token count across assistant content blocks, or None
+    if the tokenizer is unavailable (caller falls back to the API value).
+
+    Only text, tool_use, and thinking blocks are counted — tool_result blocks
+    belong to the user turn and must not be included here.
+    """
     tok = _get_tokenizer()
     if tok is None:
         return None
@@ -76,20 +78,14 @@ def _count_content_tokens(content) -> int | None:
         elif btype == "tool_use":
             name = block.get("name") or ""
             inp = block.get("input") or {}
+            # Approximation: the API serializes tool calls in an internal format
+            # we cannot replicate exactly; name + JSON input is a best-effort proxy.
             total += _tok_count(name + " " + json.dumps(inp))
-        elif btype == "tool_result":
-            c = block.get("content") or ""
-            if isinstance(c, str):
-                total += _tok_count(c)
-            elif isinstance(c, list):
-                for b in c:
-                    if isinstance(b, dict) and b.get("type") == "text":
-                        total += _tok_count(b.get("text") or "")
         elif btype == "thinking":
-            # Thinking text is stored as base64-encoded data; estimate tokens
-            # from byte length (base64 → bytes → ~4 bytes/token).
-            b64 = block.get("thinking") or ""
-            total += len(b64) * 3 // 4 // 4
+            # The thinking field contains the actual thinking text as a plain
+            # string (not base64). Redacted/encrypted thinking blocks have
+            # type "redacted_thinking" and are not captured here.
+            total += _tok_count(block.get("thinking") or "")
     return total
 
 

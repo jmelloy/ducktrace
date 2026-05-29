@@ -3,9 +3,9 @@
 After this runs, ``attributes`` holds only the *remainder* — the bits we have
 not yet lifted into a column — which makes it much easier to see what's still
 unmodelled and decide what to promote next. Anything reconstructable from a
-column (ids, types, timestamps, cwd/branch, model, tool name/role) is removed,
-as is the body text that now lives in the ``text`` column. The ``usage`` block
-is kept intact so that raw token counts remain inspectable. Genuinely un-promoted data
+column (ids, types, timestamps, cwd/branch, model, tool name/role, token counts)
+is removed, as is the body text that now lives in the ``text`` column.
+Genuinely un-promoted data
 (tool inputs, apply_patch bodies, ``stop_reason``, ``isSidechain``,
 ``turn_id``, …) is kept.
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 # Claude — keys removed at each level of the {line, message, block} attributes.
 _CLAUDE_LINE = {"type", "timestamp", "sessionId", "uuid", "parentUuid",
                 "requestId", "cwd", "gitBranch"}
-_CLAUDE_MSG = {"id", "model"}
+_CLAUDE_MSG = {"id", "model", "usage"}  # usage is captured in typed token columns
 _CLAUDE_BLOCK_STRUCT = {"type", "id", "tool_use_id", "name"}
 _CLAUDE_BLOCK_TEXT = {"text", "thinking", "content"}  # now in the `text` column
 
