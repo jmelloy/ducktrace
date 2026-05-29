@@ -18,13 +18,7 @@ from __future__ import annotations
 # Claude — keys removed at each level of the {line, message, block} attributes.
 _CLAUDE_LINE = {"type", "timestamp", "sessionId", "uuid", "parentUuid",
                 "requestId", "cwd", "gitBranch"}
-_CLAUDE_MSG = {"id", "model"}
-# Only the fields we promote to typed columns are removed from the usage block.
-# Unknown/future fields (e.g. service_tier, billed_units) are preserved.
-_CLAUDE_USAGE_PROMOTED = {
-    "input_tokens", "output_tokens",
-    "cache_creation_input_tokens", "cache_read_input_tokens",
-}
+_CLAUDE_MSG = {"id", "model", "usage"}  # usage is captured in typed token columns
 _CLAUDE_BLOCK_STRUCT = {"type", "id", "tool_use_id", "name"}
 _CLAUDE_BLOCK_TEXT = {"text", "thinking", "content"}  # now in the `text` column
 
@@ -59,12 +53,6 @@ def pop_used_event(ev: dict) -> dict:
         if a.keys() & {"line", "message", "block"}:
             _pop_keys(a.get("line"), _CLAUDE_LINE)
             _pop_keys(a.get("message"), _CLAUDE_MSG)
-            # Selectively remove promoted fields from usage; keep the rest.
-            msg = a.get("message")
-            if isinstance(msg, dict) and isinstance(msg.get("usage"), dict):
-                _pop_keys(msg["usage"], _CLAUDE_USAGE_PROMOTED)
-                if not msg["usage"]:
-                    msg.pop("usage", None)
             block = a.get("block")
             if isinstance(block, str):
                 a.pop("block", None)  # plain user text -> `text` column

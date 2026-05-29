@@ -21,31 +21,71 @@ from .util import count_lines, file_ext, parse_ts
 
 SOURCE = "claude"
 
+# ---------------------------------------------------------------------------
+# Tokenizer (optional; falls back to API-reported counts when unavailable)
+# ---------------------------------------------------------------------------
+_tok = None
+_tok_unavailable = False
 
-def _estimate_thinking_tokens(content) -> int:
-    """Estimate token count for thinking/redacted_thinking blocks only.
 
-    `thinking` blocks expose plain text — we use char count ÷ 4 as a rough
-    heuristic (~4 chars per token on average).  `redacted_thinking` blocks
-    expose only base64-encoded encrypted data; we convert to estimated byte
-    count first (base64 len × 3/4), then divide by 4 bytes/token.
-    All other block types are skipped — their token counts come from the
-    API-reported output_tokens value and must not be double-counted here.
-    """
-    if not isinstance(content, list):
+def _get_tokenizer():
+    """Lazy-load the Claude tokenizer directly from the tokenizers library."""
+    global _tok, _tok_unavailable
+    if _tok_unavailable:
+        return None
+    if _tok is not None:
+        return _tok
+    try:
+        from tokenizers import Tokenizer
+        _tok = Tokenizer.from_pretrained("Xenova/claude-tokenizer")
+    except Exception:
+        _tok_unavailable = True
+        return None
+    return _tok
+
+
+def _tok_count(text: str) -> int:
+    tok = _get_tokenizer()
+    if tok is None or not text:
         return 0
+    try:
+        return len(tok.encode(text).ids)
+    except Exception:
+        return 0
+
+
+def _count_content_tokens(content) -> int | None:
+    """Return total output token count across assistant content blocks, or None
+    if the tokenizer is unavailable (caller falls back to the API value).
+
+    Only text, tool_use, and thinking blocks are counted — tool_result blocks
+    belong to the user turn and must not be included here.
+    """
+    tok = _get_tokenizer()
+    if tok is None:
+        return None
+    if isinstance(content, str):
+        return _tok_count(content)
+    if not isinstance(content, list):
+        return None
     total = 0
     for block in content:
         if not isinstance(block, dict):
             continue
         btype = block.get("type", "")
-        if btype == "thinking":
-            text = block.get("thinking") or ""
-            total += max(1, len(text) // 4) if text else 0
-        elif btype == "redacted_thinking":
-            # data is base64; convert to approximate byte length then to tokens
-            data = block.get("data") or ""
-            total += max(1, len(data) * 3 // 4 // 4) if data else 0
+        if btype == "text":
+            total += _tok_count(block.get("text") or "")
+        elif btype == "tool_use":
+            name = block.get("name") or ""
+            inp = block.get("input") or {}
+            # Approximation: the API serializes tool calls in an internal format
+            # we cannot replicate exactly; name + JSON input is a best-effort proxy.
+            total += _tok_count(name + " " + json.dumps(inp))
+        elif btype == "thinking":
+            # The thinking field contains the actual thinking text as a plain
+            # string (not base64). Redacted/encrypted thinking blocks have
+            # type "redacted_thinking" and are not captured here.
+            total += _tok_count(block.get("thinking") or "")
     return total
 
 
@@ -410,15 +450,11 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str) -> N
     inp = usage.get("input_tokens", 0) or 0
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
-    # Always trust the API-reported output_tokens — it is the authoritative value.
-    out = usage.get("output_tokens", 0) or 0
+    computed_out = _count_content_tokens(msg.get("content"))
+    out = computed_out if computed_out is not None else (usage.get("output_tokens", 0) or 0)
     ev["input_tokens"] = inp
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr
-    # Thinking tokens are not broken out by the API; estimate from content blocks.
-    thinking_est = _estimate_thinking_tokens(msg.get("content"))
-    if thinking_est:
-        ev["reasoning_tokens"] = thinking_est
     ev["stated_cost"] = e.get("costUSD") or None
     ev["inferred_cost"] = pricing.claude_cost(model, inp, out, cc, cr)
