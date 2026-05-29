@@ -415,7 +415,6 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["text"] = f"Tool call: {block.get('name')}"
                 mine(ev, cmd)  # the Bash command, not the placeholder text
             elif btype == "tool_result":
-                print(block)
                 ev["role"] = "tool_result"
                 ev["tool_use_id"] = block.get("tool_use_id")
                 ev["text"] = _content_text(block.get("content"))
