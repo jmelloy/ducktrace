@@ -18,6 +18,7 @@ parent. Writes are idempotent on the primary keys (session_id / event_id).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from collections import defaultdict
@@ -67,8 +68,16 @@ def _merge_meta(acc: dict | None, m: dict) -> dict:
     return acc
 
 
-def _ingest(parser_mod, events_by, meta_by, *, limit, quiet) -> int:
-    """Parse a source's files into the per-session event/meta maps."""
+def _ingest(
+    parser_mod, events_by, meta_by, *,
+    limit, quiet, seen_files: dict, force: bool,
+) -> tuple[int, int, list[tuple[str, int, int]]]:
+    """Parse a source's files into the per-session event/meta maps.
+
+    Returns (n_parsed, n_skipped, new_file_stats) where new_file_stats is a
+    list of (path, mtime_ns, size_bytes) for every file that was actually parsed
+    this run (so the caller can update the cache).
+    """
     paths = parser_mod.config_paths()
     files = parser_mod.find_session_files(paths)
     if limit:
@@ -77,8 +86,29 @@ def _ingest(parser_mod, events_by, meta_by, *, limit, quiet) -> int:
     if not quiet:
         print(f"[{label}] {len(files)} session file(s) in {paths or '(none found)'}", file=sys.stderr)
 
-    n_files = 0
+    n_parsed = 0
+    n_skipped = 0
+    new_stats: list[tuple[str, int, int]] = []
+
     for i, f in enumerate(files, 1):
+        path_str = str(f)
+        if not force:
+            try:
+                st = os.stat(f)
+                mtime_ns, size = st.st_mtime_ns, st.st_size
+            except OSError:
+                mtime_ns, size = -1, -1
+            cached = seen_files.get(path_str)
+            if cached is not None and cached == (mtime_ns, size):
+                n_skipped += 1
+                continue
+        else:
+            try:
+                st = os.stat(f)
+                mtime_ns, size = st.st_mtime_ns, st.st_size
+            except OSError:
+                mtime_ns, size = -1, -1
+
         try:
             result = parser_mod.parse_file(f)
         except Exception as exc:  # keep going; report the offender
@@ -92,10 +122,11 @@ def _ingest(parser_mod, events_by, meta_by, *, limit, quiet) -> int:
         for ev in evs:
             bucket[ev["event_id"]] = ev  # dedup by event_id (overlapping resumes)
         meta_by[sid] = _merge_meta(meta_by.get(sid), meta)
-        n_files += 1
+        new_stats.append((path_str, mtime_ns, size))
+        n_parsed += 1
         if not quiet and i % 200 == 0:
             print(f"[{label}] {i}/{len(files)} files…", file=sys.stderr)
-    return n_files
+    return n_parsed, n_skipped, new_stats
 
 
 def main() -> None:
@@ -114,6 +145,8 @@ def main() -> None:
                     help="store all text verbatim (lossless; no truncation or signature stripping)")
     ap.add_argument("--keep-used-attributes", action="store_true",
                     help="keep fields in attributes even when promoted to a column (don't pop)")
+    ap.add_argument("--force", action="store_true",
+                    help="re-parse all files even if mtime/size are unchanged")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -128,13 +161,23 @@ def main() -> None:
         store.reset()
 
     start = time.time()
+    seen_files = store.get_seen_files()
     events_by: dict[str, dict] = defaultdict(dict)  # session_id -> {event_id: event}
     meta_by: dict[str, dict] = {}                    # session_id -> merged meta
+    all_new_stats: list[tuple[str, int, int]] = []
 
+    ingest_kwargs = dict(limit=args.limit, quiet=args.quiet,
+                         seen_files=seen_files, force=args.force)
     if args.source in ("claude", "all"):
-        _ingest(claude_parser, events_by, meta_by, limit=args.limit, quiet=args.quiet)
+        n, skipped, ns = _ingest(claude_parser, events_by, meta_by, **ingest_kwargs)
+        all_new_stats.extend(ns)
+        if not args.quiet and skipped:
+            print(f"[claude] skipped {skipped} unchanged file(s)", file=sys.stderr)
     if args.source in ("codex", "all"):
-        _ingest(codex_parser, events_by, meta_by, limit=args.limit, quiet=args.quiet)
+        n, skipped, ns = _ingest(codex_parser, events_by, meta_by, **ingest_kwargs)
+        all_new_stats.extend(ns)
+        if not args.quiet and skipped:
+            print(f"[codex] skipped {skipped} unchanged file(s)", file=sys.stderr)
 
     # aggregate each session once over the union of its (deduped) events
     total_e = 0
@@ -152,6 +195,8 @@ def main() -> None:
         )
         store.write_session(session, evs)
         total_e += len(evs)
+
+    store.mark_files_seen(all_new_stats)
 
     if not args.no_canonicalize:
         mapped = store.canonicalize_repositories()

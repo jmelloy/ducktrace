@@ -104,6 +104,16 @@ def _create_table(con, name: str, columns: dict[str, str], pk: str) -> None:
     con.execute(f'CREATE TABLE IF NOT EXISTS "{name}" (\n  {cols_sql},\n  PRIMARY KEY ("{pk}")\n)')
 
 
+def _create_file_cache(con) -> None:
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS file_cache (
+            file_path  VARCHAR PRIMARY KEY,
+            mtime_ns   BIGINT,
+            size_bytes BIGINT
+        )
+    """)
+
+
 def _column_arrays(rows: list[dict], columns: dict[str, str]) -> dict[str, list]:
     """Pivot row dicts into column-wise lists, JSON-encoding JSON columns."""
     data: dict[str, list] = {c: [] for c in columns}
@@ -156,6 +166,7 @@ class Store:
         self.con = duckdb.connect(path)
         _create_table(self.con, "sessions", SESSION_COLUMNS, pk="session_id")
         _create_table(self.con, "events", EVENT_COLUMNS, pk="event_id")
+        _create_file_cache(self.con)
         self._session_buf: list[dict] = []
         self._event_buf: list[dict] = []
 
@@ -168,6 +179,21 @@ class Store:
     def reset(self) -> None:
         self.con.execute("DELETE FROM events")
         self.con.execute("DELETE FROM sessions")
+        self.con.execute("DELETE FROM file_cache")
+
+    def get_seen_files(self) -> dict[str, tuple[int, int]]:
+        """Return {file_path: (mtime_ns, size_bytes)} for all cached files."""
+        rows = self.con.execute("SELECT file_path, mtime_ns, size_bytes FROM file_cache").fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
+
+    def mark_files_seen(self, entries: list[tuple[str, int, int]]) -> None:
+        """Upsert (file_path, mtime_ns, size_bytes) rows into file_cache."""
+        if not entries:
+            return
+        self.con.executemany(
+            "INSERT OR REPLACE INTO file_cache (file_path, mtime_ns, size_bytes) VALUES (?, ?, ?)",
+            entries,
+        )
 
     def _bulk_insert(self, table: str, columns: dict[str, str], rows: list[dict], pk: str) -> None:
         if not rows:
