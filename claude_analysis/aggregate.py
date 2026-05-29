@@ -9,7 +9,10 @@ from __future__ import annotations
 
 def aggregate_session(session_id: str, path: str, source: str, events: list[dict], **meta) -> dict:
     def _sum(col):
-        return sum(ev.get(col) or 0 for ev in events)
+        l = [ev.get(col) for ev in events if ev.get(col) is not None and isinstance(ev.get(col), (int, float))]
+        if not l:
+            return None
+        return sum(l)
 
     timestamps = [ev["timestamp"] for ev in events if ev.get("timestamp")]
     started = min(timestamps) if timestamps else None
@@ -29,9 +32,9 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
     tool_calls = sum(1 for ev in events if ev.get("role") == "tool_use")
     files = {ev["file_path"] for ev in events if ev.get("file_path") and ev.get("role") == "tool_use"}
 
-    inp, out = _sum("input_tokens"), _sum("output_tokens")
-    cr, cc = _sum("cache_read_tokens"), _sum("cache_creation_tokens")
-    reasoning = _sum("reasoning_tokens")
+    inp, out = _sum("input_tokens") or 0, _sum("output_tokens") or 0
+    cr, cc = _sum("cache_read_tokens") or 0, _sum("cache_creation_tokens") or 0
+    reasoning = _sum("reasoning_tokens") or 0
 
     # Roll PR/repo references (structured pr-link + mined from commands/text)
     # up to the session. ``meta`` carries the structured pr-link values; events

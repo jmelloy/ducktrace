@@ -419,7 +419,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["tool_use_id"] = block.get("tool_use_id")
                 ev["text"] = _content_text(block.get("content"))
                 
-                # ev["input_tokens"] = _count_input_tokens(block.get("content"))
+                ev["input_tokens"] = _count_input_tokens(block.get("content"))
                 
                 # Attribute the result to a file when the structured result names one,
                 # but leave line counts on the tool_use event to avoid double counting.
