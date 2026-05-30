@@ -69,7 +69,8 @@ class TestIPAddresses:
         assert _cleaned("addr=10.0.0.1") == "addr=0.0.0.0"
 
     def test_ipv6(self):
-        assert "0.0.0.0" in _cleaned("2001:db8:85a3::8a2e:370:7334")
+        assert "::" in _cleaned("2001:db8:85a3::8a2e:370:7334")
+        assert "2001:db8" not in _cleaned("2001:db8:85a3::8a2e:370:7334")
 
     def test_loopback_replaced(self):
         # 127.0.0.1 is an IPv4 address and should be redacted

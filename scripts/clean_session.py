@@ -1,7 +1,7 @@
 """Sanitize Claude Code session JSONL files for use as test fixtures.
 
 Redacts PII from all string values recursively: home paths, IPs, API keys,
-email addresses, git author lines, and machine-specific hostnames.
+email addresses, and git author lines.
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # /home/<user>/..., /Users/<user>/..., /root/...
-_RE_HOME_PATH = re.compile(r"(/home/|/Users/|/root/)[^\s\"',:;)>\]]+")
+_RE_HOME_PATH = re.compile(r"(/(?:home|Users|root)/\S+?)(?=\s|[\"']|$)")
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
 _RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"',:;)>\]]*/w-[a-z0-9]+[^\s\"',:;)>\]]*")
 
 # Hyphenated variants of the same paths (slashes replaced by hyphens in tool output, memory dirs, etc.)
-# e.g. "-tmp-pioneer-work-dcktrc-w-i4t6em-t-3c3q02-ducktrace"
-_RE_TMP_WORKTREE_HYPH = re.compile(r"(?m)^-tmp-[a-z0-9\-]+-w-[a-z0-9]+[a-z0-9\-]*")
+# e.g. "-tmp-pioneer-repos-jmelloy-ducktrace" or "-tmp-pioneer-work-dcktrc-w-i4t6em-t-3c3q02-ducktrace"
+_RE_TMP_WORKTREE_HYPH = re.compile(r"(?m)^-tmp-[a-z0-9]+(?:-[a-z0-9]+)+")
 
 # IPv4 addresses
 _RE_IPV4 = re.compile(
@@ -57,18 +57,10 @@ _RE_GIT_AUTHOR = re.compile(
     re.IGNORECASE,
 )
 
-# Single-label hostnames heuristic: word chars only, 2–63 chars, not "localhost"
-# Anchored to common surrounding contexts to avoid false positives.
-_RE_HOSTNAME = re.compile(
-    r"(?<![./\w])([a-zA-Z][a-zA-Z0-9\-]{1,62})(?![./\w])"
-)
-_HOSTNAME_SKIP = {"localhost", "hostname"}
-
-
 def _redact_string(s: str, counts: dict[str, int]) -> str:
     """Apply all redaction patterns to a single string. Returns cleaned string."""
 
-    def sub(pattern, replacement, label, value=s):
+    def sub(pattern, replacement, label):
         nonlocal s
         result, n = pattern.subn(replacement, s)
         if n:
@@ -76,7 +68,6 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
         s = result
 
     # Git author lines first (before email, so we replace the whole line)
-    orig = s
     s, n = _RE_GIT_AUTHOR.subn(r"\1User <user@example.com>", s)
     if n:
         counts["git_author"] += n
@@ -89,7 +80,7 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     sub(_RE_AUTH_HEADER, r"\1[REDACTED]", "auth_header")
     sub(_RE_EMAIL, "user@example.com", "email")
     sub(_RE_IPV4, "0.0.0.0", "ipv4")
-    sub(_RE_IPV6, "0.0.0.0", "ipv6")
+    sub(_RE_IPV6, "::", "ipv6")
 
     return s
 
