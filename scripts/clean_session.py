@@ -21,9 +21,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # /home/<user>/..., /Users/<user>/..., /root/...
-# Whitelist terminator: stop only at whitespace or quote, so paths with
-# parentheses/brackets (e.g. /home/user/dir(1)/sub) are captured in full.
-_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)/[^\s\"']+")
+# Terminator excludes common delimiters so closing parens/brackets/commas are not consumed.
+_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)/[^\s\"'\`,;)\]]+")
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
 _RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"']*/w-[a-z0-9]+[^\s\"']*")
