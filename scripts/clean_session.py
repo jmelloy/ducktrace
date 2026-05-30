@@ -20,6 +20,13 @@ from pathlib import Path
 # /home/<user>/..., /Users/<user>/..., /root/...
 _RE_HOME_PATH = re.compile(r"(/home/|/Users/|/root/)[^\s\"',:;)>\]]+")
 
+# /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
+_RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"',:;)>\]]*/w-[a-z0-9]+[^\s\"',:;)>\]]*")
+
+# Hyphenated variants of the same paths (slashes replaced by hyphens in tool output, memory dirs, etc.)
+# e.g. "-tmp-pioneer-work-dcktrc-w-i4t6em-t-3c3q02-ducktrace"
+_RE_TMP_WORKTREE_HYPH = re.compile(r"(?m)^-tmp-[a-z0-9\-]+-w-[a-z0-9]+[a-z0-9\-]*")
+
 # IPv4 addresses
 _RE_IPV4 = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
@@ -74,6 +81,8 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     if n:
         counts["git_author"] += n
 
+    sub(_RE_TMP_WORKTREE, "/tmp/workdir", "tmp_worktree")
+    sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", "tmp_worktree")
     sub(_RE_HOME_PATH, "/home/user/...", "home_path")
     sub(_RE_SK_ANT, "[REDACTED]", "api_key")
     sub(_RE_BEARER, r"\1[REDACTED]", "bearer_token")

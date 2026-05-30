@@ -47,6 +47,16 @@ class TestHomePaths:
         assert _cleaned("/etc/passwd") == "/etc/passwd"
         assert _cleaned("/tmp/file.txt") == "/tmp/file.txt"
 
+    def test_tmp_worktree_path(self):
+        result = _cleaned("/tmp/pioneer-work/dcktrc/w-i4t6em/t-3c3q02/ducktrace")
+        assert "pioneer-work" not in result
+        assert "w-i4t6em" not in result
+        assert "/tmp/workdir" in result
+
+    def test_tmp_worktree_path_variants(self):
+        assert "/tmp/workdir" in _cleaned("/tmp/foo/w-abc123/project")
+        assert "/tmp/workdir" in _cleaned("/tmp/pioneer-work/proj/w-xyz999/repo")
+
     def test_count_incremented(self):
         assert _counts("/home/alice/x /home/bob/y")["home_path"] == 2
 
