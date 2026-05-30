@@ -261,23 +261,31 @@ class TestCLI:
 # ---------------------------------------------------------------------------
 
 class TestDictKeyRedaction:
-    def test_email_in_key_redacted(self):
+    # Keys are NOT redacted by default; pass redact_keys=True to opt in.
+
+    def test_keys_not_redacted_by_default(self):
         record = {"user@corp.com": "some value"}
         cleaned, counts = clean_record(record)
+        assert "user@corp.com" in cleaned
+        assert counts.get("email", 0) == 0
+
+    def test_email_in_key_redacted_with_flag(self):
+        record = {"user@corp.com": "some value"}
+        cleaned, counts = clean_record(record, redact_keys=True)
         assert "user@corp.com" not in cleaned
         assert "user@example.com" in cleaned
         assert counts.get("email", 0) >= 1
 
-    def test_api_key_in_key_redacted(self):
+    def test_api_key_in_key_redacted_with_flag(self):
         record = {"sk-ant-api03-abc123XYZ": "token value"}
-        cleaned, counts = clean_record(record)
+        cleaned, counts = clean_record(record, redact_keys=True)
         assert "sk-ant-api03-abc123XYZ" not in cleaned
         assert "[REDACTED]" in cleaned
         assert counts.get("api_key", 0) >= 1
 
-    def test_nested_dict_key_redacted(self):
+    def test_nested_dict_key_redacted_with_flag(self):
         record = {"outer": {"user@nested.com": "val"}}
-        cleaned, _ = clean_record(record)
+        cleaned, _ = clean_record(record, redact_keys=True)
         assert "user@nested.com" not in str(cleaned)
         assert "user@example.com" in str(cleaned)
 
@@ -286,3 +294,47 @@ class TestDictKeyRedaction:
         cleaned, _ = clean_record(record)
         assert "type" in cleaned
         assert "sessionId" in cleaned
+
+    def test_redact_keys_cli_flag(self, tmp_path):
+        src = tmp_path / "keys.jsonl"
+        src.write_text('{"user@corp.com": "value"}\n')
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir), "--redact-keys"])
+        content = (out_dir / "keys.jsonl").read_text()
+        assert "user@corp.com" not in content
+        assert "user@example.com" in content
+
+
+# ---------------------------------------------------------------------------
+# --skip-malformed flag tests
+# ---------------------------------------------------------------------------
+
+class TestSkipMalformed:
+    def test_skip_malformed_omits_line(self, tmp_path):
+        src = tmp_path / "mixed.jsonl"
+        src.write_text(
+            '{"type": "user"}\n'
+            'not valid json\n'
+            '{"type": "assistant"}\n'
+        )
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir), "--skip-malformed"])
+        out_lines = [l for l in (out_dir / "mixed.jsonl").read_text().splitlines() if l.strip()]
+        assert len(out_lines) == 2
+        assert all(json.loads(l) for l in out_lines)
+
+    def test_skip_malformed_still_warns(self, tmp_path, capsys):
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not json\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir), "--skip-malformed"])
+        assert "WARNING" in capsys.readouterr().err
+
+    def test_default_writes_malformed_line(self, tmp_path):
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not json but secret@corp.com here\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "bad.jsonl").read_text()
+        assert content.strip() != ""
+        assert "secret@corp.com" not in content
