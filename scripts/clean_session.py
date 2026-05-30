@@ -18,14 +18,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # /home/<user>/..., /Users/<user>/..., /root/...
-_RE_HOME_PATH = re.compile(r"(/(?:home|Users|root)/\S+?)(?=\s|[\"']|$)")
+_RE_HOME_PATH = re.compile(r"(/(?:home|Users|root)/\S+?)(?=[\s\"',;:)>\]]|$)")
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
 _RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"',:;)>\]]*/w-[a-z0-9]+[^\s\"',:;)>\]]*")
 
 # Hyphenated variants of the same paths (slashes replaced by hyphens in tool output, memory dirs, etc.)
 # e.g. "-tmp-pioneer-repos-jmelloy-ducktrace" or "-tmp-pioneer-work-dcktrc-w-i4t6em-t-3c3q02-ducktrace"
-_RE_TMP_WORKTREE_HYPH = re.compile(r"(?m)^-tmp-[a-z0-9]+(?:-[a-z0-9]+)+")
+_RE_TMP_WORKTREE_HYPH = re.compile(r"-tmp-[a-z0-9]+(?:-[a-z0-9]+)+")
 
 # IPv4 addresses
 _RE_IPV4 = re.compile(
