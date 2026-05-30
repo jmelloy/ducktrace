@@ -236,3 +236,12 @@ class TestCLI:
         main([str(src), "--output-dir", str(out_dir)])
         raw = (out_dir / "e.jsonl").read_text()
         assert raw.count("\n") >= 3
+
+    def test_invalid_json_line_gets_regex_redaction(self, tmp_path):
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not valid json but has secret@corp.com in it\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "bad.jsonl").read_text()
+        assert "secret@corp.com" not in content
+        assert "user@example.com" in content

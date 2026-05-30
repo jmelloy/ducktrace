@@ -36,7 +36,7 @@ _RE_IPV4 = re.compile(
 _RE_IPV6 = re.compile(
     r"(?:\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b)"
     r"|(?:\b(?:[0-9a-fA-F]{1,4}:)+:[0-9a-fA-F]{0,4}\b)"
-    r"|(?:\b::[0-9a-fA-F:]+\b)"
+    r"|(?:\b::(?:[0-9a-fA-F]{1,4}:){1,6}[0-9a-fA-F]{1,4}\b)"
 )
 
 # Anthropic API keys
@@ -126,7 +126,16 @@ def _process_file(src: Path, output_dir: Path) -> dict[str, int]:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                fout.write(line + "\n")
+                line_counts: dict[str, int] = defaultdict(int)
+                redacted_line = _redact_string(line, line_counts)
+                if line_counts:
+                    print(
+                        "WARNING: non-JSON line written after regex-only redaction",
+                        file=sys.stderr,
+                    )
+                    for k, v in line_counts.items():
+                        total_counts[k] += v
+                fout.write(redacted_line + "\n")
                 continue
             cleaned, counts = clean_record(record)
             fout.write(json.dumps(cleaned, ensure_ascii=False) + "\n")
