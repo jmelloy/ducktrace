@@ -88,8 +88,8 @@ def _uuid_placeholder(match: re.Match) -> str:
 def _redact_string(s: str, counts: dict[str, int]) -> str:
     """Apply all redaction patterns to a single string. Returns cleaned string."""
 
-    def sub(pattern, replacement, label) -> str:
-        result, n = pattern.subn(replacement, s)
+    def sub(pattern, replacement, text, label) -> str:
+        result, n = pattern.subn(replacement, text)
         if n:
             counts[label] += n
         return result
@@ -99,18 +99,18 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     if n:
         counts["git_author"] += n
 
-    s = sub(_RE_TMP_WORKTREE, "/tmp/workdir", "tmp_worktree")
-    s = sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", "tmp_worktree")
-    s = sub(_RE_HOME_PATH, "/home/user/...", "home_path")
-    s = sub(_RE_SK_ANT, "[REDACTED]", "api_key")
+    s = sub(_RE_TMP_WORKTREE, "/tmp/workdir", s, "tmp_worktree")
+    s = sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", s, "tmp_worktree")
+    s = sub(_RE_HOME_PATH, "/home/user/...", s, "home_path")
+    s = sub(_RE_SK_ANT, "[REDACTED]", s, "api_key")
     # _RE_AUTH_HEADER fires before _RE_BEARER so a full Authorization header line
     # is caught unconditionally before the bearer-specific pattern can partially match it.
-    s = sub(_RE_AUTH_HEADER, r"\1[REDACTED]", "auth_header")
-    s = sub(_RE_BEARER, r"\1[REDACTED]", "bearer_token")
-    s = sub(_RE_EMAIL, "user@example.com", "email")
-    s = sub(_RE_IPV4, "0.0.0.0", "ipv4")
-    s = sub(_RE_IPV6, "::", "ipv6")
-    s = sub(_RE_REQUEST_ID, "[REDACTED]", "request_id")
+    s = sub(_RE_AUTH_HEADER, r"\1[REDACTED]", s, "auth_header")
+    s = sub(_RE_BEARER, r"\1[REDACTED]", s, "bearer_token")
+    s = sub(_RE_EMAIL, "user@example.com", s, "email")
+    s = sub(_RE_IPV4, "0.0.0.0", s, "ipv4")
+    s = sub(_RE_IPV6, "::", s, "ipv6")
+    s = sub(_RE_REQUEST_ID, "[REDACTED]", s, "request_id")
 
     # UUIDs: replace with deterministic hash-based placeholder (preserves referential integrity)
     result, n = _RE_UUID.subn(_uuid_placeholder, s)
@@ -119,7 +119,7 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     s = result
 
     # Git branch names with task IDs
-    s = sub(_RE_GIT_BRANCH, "feature/redacted-branch", "git_branch")
+    s = sub(_RE_GIT_BRANCH, "feature/redacted-branch", s, "git_branch")
 
     return s
 
