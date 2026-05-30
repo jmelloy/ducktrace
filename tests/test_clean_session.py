@@ -61,6 +61,17 @@ class TestHomePaths:
     def test_count_incremented(self):
         assert _counts("/home/alice/x /home/bob/y")["home_path"] == 2
 
+    def test_path_with_parens_fully_captured(self):
+        # Whitelist regex: parens/brackets should not truncate the match
+        result = _cleaned("/home/user/dir(1)/subdir")
+        assert "(1)/subdir" not in result
+        assert "/home/user/..." in result
+
+    def test_path_with_brackets_fully_captured(self):
+        result = _cleaned("/home/user/dir[0]/file")
+        assert "[0]/file" not in result
+        assert "/home/user/..." in result
+
 
 class TestIPAddresses:
     def test_ipv4(self):
@@ -428,3 +439,41 @@ class TestGitBranchRedaction:
         content = (out_dir / "b.jsonl").read_text()
         assert "claude" not in content
         assert "feature/redacted-branch" in content
+
+
+# ---------------------------------------------------------------------------
+# Request/message ID redaction tests
+# ---------------------------------------------------------------------------
+
+class TestRequestIDRedaction:
+    def test_req_id_redacted(self):
+        result = _cleaned("request req_01abc123defghij started")
+        assert "req_01abc123defghij" not in result
+        assert "[REDACTED]" in result
+
+    def test_msg_id_redacted(self):
+        result = _cleaned("message msg_01abc123defghij received")
+        assert "msg_01abc123defghij" not in result
+        assert "[REDACTED]" in result
+
+    def test_count_incremented(self):
+        text = "req_01abcdefghij1 and msg_01abcdefghij2"
+        assert _counts(text)["request_id"] == 2
+
+    def test_short_req_not_redacted(self):
+        # Fewer than 10 chars after underscore — too short to be a real ID
+        assert _cleaned("req_short") == "req_short"
+
+    def test_req_id_in_nested_record(self):
+        record = {"requestId": "req_01abc123defghijklmno"}
+        cleaned, counts = clean_record(record)
+        assert "req_01abc123defghijklmno" not in cleaned["requestId"]
+        assert counts["request_id"] == 1
+
+    def test_req_id_in_jsonl(self, tmp_path):
+        src = tmp_path / "r.jsonl"
+        src.write_text(json.dumps({"id": "req_01abc123defghijklmno"}) + "\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "r.jsonl").read_text()
+        assert "req_01abc123defghijklmno" not in content

@@ -21,13 +21,12 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # /home/<user>/..., /Users/<user>/..., /root/...
-# Uses the same negative-class terminator set as _RE_TMP_WORKTREE so that paths
-# ending before ':' (e.g. in JSON "key":"/home/user/file") are fully captured,
-# and paths containing '(' or '[' are not cut short.
-_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)/[^\s\"',;:()\[\]>]+")
+# Whitelist terminator: stop only at whitespace or quote, so paths with
+# parentheses/brackets (e.g. /home/user/dir(1)/sub) are captured in full.
+_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)/[^\s\"']+")
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
-_RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"',;:()\[\]>]*/w-[a-z0-9]+[^\s\"',;:()\[\]>]*")
+_RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"']*/w-[a-z0-9]+[^\s\"']*")
 
 # Hyphenated variants of the same paths (slashes replaced by hyphens in tool output, memory dirs, etc.)
 # Anchored to the known worker-ID segment to avoid over-matching.
@@ -76,6 +75,9 @@ _RE_GIT_BRANCH = re.compile(
     r"\b[a-z][a-z0-9_\-]*/[a-z0-9][a-z0-9_\-]+-t-[a-z0-9]{4,}\b"
 )
 
+# Anthropic API request/message IDs (e.g. req_01abc123..., msg_01abc123...)
+_RE_REQUEST_ID = re.compile(r"\b(?:req|msg)_[A-Za-z0-9]{10,}\b")
+
 
 def _uuid_placeholder(match: re.Match) -> str:
     """Return a deterministic UUID-shaped placeholder derived from the original UUID."""
@@ -86,27 +88,29 @@ def _uuid_placeholder(match: re.Match) -> str:
 def _redact_string(s: str, counts: dict[str, int]) -> str:
     """Apply all redaction patterns to a single string. Returns cleaned string."""
 
-    def sub(pattern, replacement, label):
-        nonlocal s
+    def sub(pattern, replacement, label) -> str:
         result, n = pattern.subn(replacement, s)
         if n:
             counts[label] += n
-        s = result
+        return result
 
     # Git author lines first (before email, so we replace the whole line)
     s, n = _RE_GIT_AUTHOR.subn(r"\1User <user@example.com>", s)
     if n:
         counts["git_author"] += n
 
-    sub(_RE_TMP_WORKTREE, "/tmp/workdir", "tmp_worktree")
-    sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", "tmp_worktree")
-    sub(_RE_HOME_PATH, "/home/user/...", "home_path")
-    sub(_RE_SK_ANT, "[REDACTED]", "api_key")
-    sub(_RE_BEARER, r"\1[REDACTED]", "bearer_token")
-    sub(_RE_AUTH_HEADER, r"\1[REDACTED]", "auth_header")
-    sub(_RE_EMAIL, "user@example.com", "email")
-    sub(_RE_IPV4, "0.0.0.0", "ipv4")
-    sub(_RE_IPV6, "::", "ipv6")
+    s = sub(_RE_TMP_WORKTREE, "/tmp/workdir", "tmp_worktree")
+    s = sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", "tmp_worktree")
+    s = sub(_RE_HOME_PATH, "/home/user/...", "home_path")
+    s = sub(_RE_SK_ANT, "[REDACTED]", "api_key")
+    # _RE_AUTH_HEADER fires before _RE_BEARER so a full Authorization header line
+    # is caught unconditionally before the bearer-specific pattern can partially match it.
+    s = sub(_RE_AUTH_HEADER, r"\1[REDACTED]", "auth_header")
+    s = sub(_RE_BEARER, r"\1[REDACTED]", "bearer_token")
+    s = sub(_RE_EMAIL, "user@example.com", "email")
+    s = sub(_RE_IPV4, "0.0.0.0", "ipv4")
+    s = sub(_RE_IPV6, "::", "ipv6")
+    s = sub(_RE_REQUEST_ID, "[REDACTED]", "request_id")
 
     # UUIDs: replace with deterministic hash-based placeholder (preserves referential integrity)
     result, n = _RE_UUID.subn(_uuid_placeholder, s)
@@ -115,7 +119,7 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     s = result
 
     # Git branch names with task IDs
-    sub(_RE_GIT_BRANCH, "feature/redacted-branch", "git_branch")
+    s = sub(_RE_GIT_BRANCH, "feature/redacted-branch", "git_branch")
 
     return s
 
@@ -149,6 +153,10 @@ def clean_record(record: dict, redact_keys: bool = False) -> tuple[dict, dict[st
     cleaned = _redact_value(record, counts, redact_keys=redact_keys)
     return cleaned, dict(counts)
 
+
+# Default output dir is resolved relative to this script so the CLI works
+# correctly regardless of cwd.
+_DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "tests/fixtures/sessions"
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -209,8 +217,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("files", nargs="+", metavar="FILE", help=".jsonl session files")
     parser.add_argument(
         "--output-dir",
-        default="tests/fixtures/sessions",
-        help="Destination directory (default: tests/fixtures/sessions/)",
+        default=str(_DEFAULT_OUTPUT_DIR),
+        help="Destination directory (default: <repo-root>/tests/fixtures/sessions/)",
     )
     parser.add_argument(
         "--redact-keys",
@@ -226,7 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir).resolve()
+    print(f"Output directory: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     grand_total: dict[str, int] = defaultdict(int)
