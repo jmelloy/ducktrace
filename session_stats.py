@@ -104,7 +104,7 @@ def main() -> None:
     events = list(events_by_id.values())
 
     # --- parsed event totals (what goes into the DB) ---
-    parsed: dict[str, dict] = defaultdict(lambda: dict(input=0, output=0, cache_read=0, cache_write=0, cost=0.0))
+    parsed: dict[str, dict] = defaultdict(lambda: dict(input=0, output=0, cache_read=0, cache_write=0, cost=0.0, reasoning_tokens=0))
     for ev in events:
         m = ev.get("model") or "(no model)"
         for col, key in (
@@ -112,8 +112,10 @@ def main() -> None:
             ("cache_read_tokens", "cache_read"),
             ("cache_creation_tokens", "cache_write"),
             ("input_tokens", "input"),
+            ("reasoning_tokens", "reasoning_tokens"),
         ):
             v = ev.get(col)
+            
             if v is not None:
                 parsed[m][key] += v
         c = ev.get("inferred_cost")
@@ -126,6 +128,7 @@ def main() -> None:
             f"  {m}:  {_fmt(t['input'])} input, {_fmt(t['output'])} output, "
             f"{_fmt(t['cache_read'])} cache read, {_fmt(t['cache_write'])} cache write "
             f"(${t['cost']:.2f})"
+            f"{', ' + _fmt(t['reasoning_tokens']) + ' reasoning' if t['reasoning_tokens'] else ''}"
         )
 
     # --- raw API usage block totals (ground truth) ---

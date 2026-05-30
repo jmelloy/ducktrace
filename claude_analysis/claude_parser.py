@@ -72,7 +72,11 @@ def _estimate_thinking_tokens(content) -> int:
         btype = block.get("type", "") 
         if btype == "thinking":
             text = block.get("thinking") or ""
-            total += max(1, len(text) // 4) if text else 0
+            signature = block.get("signature", "")
+            if signature:
+                total += max(1, len(signature) // 4)  # signatures are also text, but typically much shorter than the visible thinking text, so count separately to avoid underestimating when thinking is redacted but signature is present
+            if text:
+                total += _tok_count(text)
         elif btype == "redacted_thinking":
             # data is base64; convert to approximate byte length then to tokens
             data = block.get("data") or "" 
@@ -393,6 +397,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = t
                 ev["text"] = block.get("thinking", "")
                 ev["reasoning_tokens"] = _estimate_thinking_tokens([block])
+                
             elif btype == "text":
                 ev["role"] = t
                 ev["text"] = block.get("text", "")
