@@ -245,3 +245,44 @@ class TestCLI:
         content = (out_dir / "bad.jsonl").read_text()
         assert "secret@corp.com" not in content
         assert "user@example.com" in content
+
+    def test_invalid_json_always_emits_warning(self, tmp_path, capsys):
+        src = tmp_path / "warn.jsonl"
+        src.write_text("not valid json at all, no pii here\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "non-JSON" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Dict-key redaction tests
+# ---------------------------------------------------------------------------
+
+class TestDictKeyRedaction:
+    def test_email_in_key_redacted(self):
+        record = {"user@corp.com": "some value"}
+        cleaned, counts = clean_record(record)
+        assert "user@corp.com" not in cleaned
+        assert "user@example.com" in cleaned
+        assert counts.get("email", 0) >= 1
+
+    def test_api_key_in_key_redacted(self):
+        record = {"sk-ant-api03-abc123XYZ": "token value"}
+        cleaned, counts = clean_record(record)
+        assert "sk-ant-api03-abc123XYZ" not in cleaned
+        assert "[REDACTED]" in cleaned
+        assert counts.get("api_key", 0) >= 1
+
+    def test_nested_dict_key_redacted(self):
+        record = {"outer": {"user@nested.com": "val"}}
+        cleaned, _ = clean_record(record)
+        assert "user@nested.com" not in str(cleaned)
+        assert "user@example.com" in str(cleaned)
+
+    def test_clean_keys_pass_through(self):
+        record = {"type": "assistant", "sessionId": "abc-123"}
+        cleaned, _ = clean_record(record)
+        assert "type" in cleaned
+        assert "sessionId" in cleaned

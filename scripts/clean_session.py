@@ -90,7 +90,7 @@ def _redact_value(value, counts: dict[str, int]):
     if isinstance(value, str):
         return _redact_string(value, counts)
     if isinstance(value, dict):
-        return {k: _redact_value(v, counts) for k, v in value.items()}
+        return {_redact_string(k, counts): _redact_value(v, counts) for k, v in value.items()}
     if isinstance(value, list):
         return [_redact_value(item, counts) for item in value]
     return value
@@ -128,13 +128,12 @@ def _process_file(src: Path, output_dir: Path) -> dict[str, int]:
             except json.JSONDecodeError:
                 line_counts: dict[str, int] = defaultdict(int)
                 redacted_line = _redact_string(line, line_counts)
-                if line_counts:
-                    print(
-                        "WARNING: non-JSON line written after regex-only redaction",
-                        file=sys.stderr,
-                    )
-                    for k, v in line_counts.items():
-                        total_counts[k] += v
+                print(
+                    "WARNING: non-JSON line written after regex-only redaction",
+                    file=sys.stderr,
+                )
+                for k, v in line_counts.items():
+                    total_counts[k] += v
                 fout.write(redacted_line + "\n")
                 continue
             cleaned, counts = clean_record(record)
