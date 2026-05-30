@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -338,3 +339,92 @@ class TestSkipMalformed:
         content = (out_dir / "bad.jsonl").read_text()
         assert content.strip() != ""
         assert "secret@corp.com" not in content
+
+
+# ---------------------------------------------------------------------------
+# UUID redaction tests
+# ---------------------------------------------------------------------------
+
+_UUID_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_SAMPLE_UUID = "a1164fe6-b620-4c21-acf6-8aa27cab7e59"
+_SAMPLE_UUID2 = "034e2365-4ff6-467a-baf7-cfb8276a17db"
+
+
+class TestUUIDRedaction:
+    def test_uuid_value_is_redacted(self):
+        result = _cleaned(f"session {_SAMPLE_UUID} started")
+        assert _SAMPLE_UUID not in result
+
+    def test_replacement_looks_like_uuid(self):
+        result = _cleaned(_SAMPLE_UUID)
+        assert _UUID_PATTERN.fullmatch(result), f"{result!r} is not UUID-shaped"
+
+    def test_replacement_is_deterministic(self):
+        assert _cleaned(_SAMPLE_UUID) == _cleaned(_SAMPLE_UUID)
+
+    def test_different_uuids_get_different_placeholders(self):
+        r1 = _cleaned(_SAMPLE_UUID)
+        r2 = _cleaned(_SAMPLE_UUID2)
+        assert r1 != r2
+
+    def test_non_uuid_string_untouched(self):
+        assert _cleaned("abc-123") == "abc-123"
+        assert _cleaned("v1.2.3") == "v1.2.3"
+
+    def test_count_incremented(self):
+        assert _counts(f"{_SAMPLE_UUID} and {_SAMPLE_UUID2}")["uuid"] == 2
+
+    def test_uuid_in_nested_record(self):
+        record = {"sessionId": _SAMPLE_UUID, "message": {"requestId": _SAMPLE_UUID2}}
+        cleaned, counts = clean_record(record)
+        assert cleaned["sessionId"] != _SAMPLE_UUID
+        assert cleaned["message"]["requestId"] != _SAMPLE_UUID2
+        assert counts["uuid"] == 2
+
+    def test_uuid_redaction_in_jsonl(self, tmp_path):
+        src = tmp_path / "s.jsonl"
+        src.write_text(json.dumps({"sessionId": _SAMPLE_UUID}) + "\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "s.jsonl").read_text()
+        assert _SAMPLE_UUID not in content
+
+
+# ---------------------------------------------------------------------------
+# Git branch name redaction tests
+# ---------------------------------------------------------------------------
+
+class TestGitBranchRedaction:
+    def test_task_branch_is_redacted(self):
+        result = _cleaned("claude/clean-feature-t-3c3q")
+        assert "claude" not in result
+        assert "t-3c3q" not in result
+        assert "feature/redacted-branch" in result
+
+    def test_real_fixture_branch_is_redacted(self):
+        branch = "claude/clean-claude-session-files-for-test-fixtures-t-3c3q"
+        result = _cleaned(branch)
+        assert "claude" not in result
+        assert "feature/redacted-branch" in result
+
+    def test_main_branch_not_redacted(self):
+        assert _cleaned("main") == "main"
+
+    def test_feature_branch_without_task_id_not_redacted(self):
+        assert _cleaned("feature/add-login") == "feature/add-login"
+
+    def test_branch_in_record_field(self):
+        record = {"gitBranch": "claude/my-work-t-3c3q"}
+        cleaned, counts = clean_record(record)
+        assert "claude" not in cleaned["gitBranch"]
+        assert cleaned["gitBranch"] == "feature/redacted-branch"
+        assert counts["git_branch"] == 1
+
+    def test_branch_redaction_in_jsonl(self, tmp_path):
+        src = tmp_path / "b.jsonl"
+        src.write_text(json.dumps({"gitBranch": "claude/my-feature-t-abc1"}) + "\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "b.jsonl").read_text()
+        assert "claude" not in content
+        assert "feature/redacted-branch" in content

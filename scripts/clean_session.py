@@ -1,12 +1,13 @@
 """Sanitize Claude Code session JSONL files for use as test fixtures.
 
 Redacts PII from all string values recursively: home paths, IPs, API keys,
-email addresses, and git author lines.
+email addresses, git author lines, UUIDs, and internal branch names.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -64,6 +65,23 @@ _RE_GIT_AUTHOR = re.compile(
     re.IGNORECASE,
 )
 
+# UUIDs in standard format (version-agnostic)
+_RE_UUID = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
+# Git branch names with username/description-t-taskid pattern
+# Matches branches like "claude/my-feature-t-3c3q" but not "main" or "feature/normal"
+_RE_GIT_BRANCH = re.compile(
+    r"\b[a-z][a-z0-9_\-]*/[a-z0-9][a-z0-9_\-]+-t-[a-z0-9]{4,}\b"
+)
+
+
+def _uuid_placeholder(match: re.Match) -> str:
+    """Return a deterministic UUID-shaped placeholder derived from the original UUID."""
+    h = hashlib.md5(match.group(0).lower().encode()).hexdigest()
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
 
 def _redact_string(s: str, counts: dict[str, int]) -> str:
     """Apply all redaction patterns to a single string. Returns cleaned string."""
@@ -89,6 +107,15 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     sub(_RE_EMAIL, "user@example.com", "email")
     sub(_RE_IPV4, "0.0.0.0", "ipv4")
     sub(_RE_IPV6, "::", "ipv6")
+
+    # UUIDs: replace with deterministic hash-based placeholder (preserves referential integrity)
+    result, n = _RE_UUID.subn(_uuid_placeholder, s)
+    if n:
+        counts["uuid"] += n
+    s = result
+
+    # Git branch names with task IDs
+    sub(_RE_GIT_BRANCH, "feature/redacted-branch", "git_branch")
 
     return s
 
