@@ -34,9 +34,9 @@ _RE_IPV4 = re.compile(
 
 # IPv6 addresses (simplified; catches most real-world forms)
 _RE_IPV6 = re.compile(
-    r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b"
-    r"|\b(?:[0-9a-fA-F]{1,4}:)+:[0-9a-fA-F]{0,4}\b"
-    r"|\b::[0-9a-fA-F:]+\b"
+    r"(?:\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b)"
+    r"|(?:\b(?:[0-9a-fA-F]{1,4}:)+:[0-9a-fA-F]{0,4}\b)"
+    r"|(?:\b::[0-9a-fA-F:]+\b)"
 )
 
 # Anthropic API keys

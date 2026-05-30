@@ -76,6 +76,15 @@ class TestIPAddresses:
         # 127.0.0.1 is an IPv4 address and should be redacted
         assert "0.0.0.0" in _cleaned("127.0.0.1")
 
+    def test_ipv6_no_false_positive_version_string(self):
+        assert _cleaned("v1.2:3") == "v1.2:3"
+
+    def test_ipv6_no_false_positive_hex_fragment(self):
+        assert _cleaned("#abc123") == "#abc123"
+
+    def test_ipv6_no_false_positive_semver(self):
+        assert _cleaned("1.0.0") == "1.0.0"
+
 
 class TestAPIKeys:
     def test_sk_ant_key(self):
