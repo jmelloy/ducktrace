@@ -24,7 +24,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from claude_analysis import claude_parser, codex_parser
+from claude_analysis import claude_parser, codex_parser, pricing
 from claude_analysis.aggregate import aggregate_session
 from claude_analysis.db import Store
 
@@ -188,6 +188,8 @@ def main() -> None:
         m = meta_by[sid]
         repository = m.get("repository") or ""
         for ev in evs:  # re-stamp so events agree with the merged session repo
+            ev["session_id"] = sid
+            ev["source"] = m["source"]
             ev["repository"] = repository
         title = m.get("custom_title") or m.get("ai_title") or None
         session = aggregate_session(
