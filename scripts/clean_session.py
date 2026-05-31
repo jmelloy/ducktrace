@@ -84,6 +84,11 @@ def _uuid_placeholder(match: re.Match) -> str:
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
+def _hash_req_id(match: re.Match) -> str:
+    """Return a deterministic 16-char hex hash of the matched request/message ID."""
+    return hashlib.sha256(match.group(0).encode()).hexdigest()[:16]
+
+
 def _redact_string(s: str, counts: dict[str, int]) -> str:
     """Apply all redaction patterns to a single string. Returns cleaned string."""
 
@@ -109,7 +114,11 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     s = sub(_RE_EMAIL, "user@example.com", s, "email")
     s = sub(_RE_IPV4, "0.0.0.0", s, "ipv4")
     s = sub(_RE_IPV6, "::", s, "ipv6")
-    s = sub(_RE_REQUEST_ID, "[REDACTED]", s, "request_id")
+    # Request/message IDs: replace with deterministic hash (preserves uniqueness/referential integrity)
+    result, n = _RE_REQUEST_ID.subn(_hash_req_id, s)
+    if n:
+        counts["request_id"] += n
+    s = result
 
     # UUIDs: replace with deterministic hash-based placeholder (preserves referential integrity)
     result, n = _RE_UUID.subn(_uuid_placeholder, s)

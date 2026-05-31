@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -442,19 +443,39 @@ class TestGitBranchRedaction:
 
 
 # ---------------------------------------------------------------------------
-# Request/message ID redaction tests
+# Request/message ID hashing tests
 # ---------------------------------------------------------------------------
 
-class TestRequestIDRedaction:
-    def test_req_id_redacted(self):
-        result = _cleaned("request req_01abc123defghij started")
-        assert "req_01abc123defghij" not in result
-        assert "[REDACTED]" in result
+def _expected_req_hash(s: str) -> str:
+    """Compute the expected deterministic hash for a request/message ID."""
+    return hashlib.sha256(s.encode()).hexdigest()[:16]
 
-    def test_msg_id_redacted(self):
-        result = _cleaned("message msg_01abc123defghij received")
-        assert "msg_01abc123defghij" not in result
-        assert "[REDACTED]" in result
+
+_SAMPLE_REQ_ID = "req_01abc123defghij"
+_SAMPLE_MSG_ID = "msg_01abc123defghij"
+_SAMPLE_REQ_ID2 = "req_01abc123defghijk"
+
+
+class TestRequestIDRedaction:
+    def test_req_id_hashed(self):
+        result = _cleaned(f"request {_SAMPLE_REQ_ID} started")
+        assert _SAMPLE_REQ_ID not in result
+        assert "[REDACTED]" not in result
+        assert _expected_req_hash(_SAMPLE_REQ_ID) in result
+
+    def test_msg_id_hashed(self):
+        result = _cleaned(f"message {_SAMPLE_MSG_ID} received")
+        assert _SAMPLE_MSG_ID not in result
+        assert "[REDACTED]" not in result
+        assert _expected_req_hash(_SAMPLE_MSG_ID) in result
+
+    def test_hash_is_deterministic(self):
+        assert _cleaned(_SAMPLE_REQ_ID) == _cleaned(_SAMPLE_REQ_ID)
+
+    def test_different_ids_get_different_hashes(self):
+        r1 = _cleaned(_SAMPLE_REQ_ID)
+        r2 = _cleaned(_SAMPLE_REQ_ID2)
+        assert r1 != r2
 
     def test_count_incremented(self):
         text = "req_01abcdefghij1 and msg_01abcdefghij2"
@@ -468,12 +489,15 @@ class TestRequestIDRedaction:
         record = {"requestId": "req_01abc123defghijklmno"}
         cleaned, counts = clean_record(record)
         assert "req_01abc123defghijklmno" not in cleaned["requestId"]
+        assert cleaned["requestId"] == _expected_req_hash("req_01abc123defghijklmno")
         assert counts["request_id"] == 1
 
     def test_req_id_in_jsonl(self, tmp_path):
         src = tmp_path / "r.jsonl"
-        src.write_text(json.dumps({"id": "req_01abc123defghijklmno"}) + "\n")
+        req_id = "req_01abc123defghijklmno"
+        src.write_text(json.dumps({"id": req_id}) + "\n")
         out_dir = tmp_path / "out"
         main([str(src), "--output-dir", str(out_dir)])
         content = (out_dir / "r.jsonl").read_text()
-        assert "req_01abc123defghijklmno" not in content
+        assert req_id not in content
+        assert _expected_req_hash(req_id) in content
