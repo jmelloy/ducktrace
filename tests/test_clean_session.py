@@ -91,8 +91,19 @@ class TestIPAddresses:
         assert _cleaned("addr=10.0.0.1") == "addr=0.0.0.0"
 
     def test_ipv6(self):
-        assert "::" in _cleaned("2001:db8:85a3::8a2e:370:7334")
+        assert "0.0.0.0" in _cleaned("2001:db8:85a3::8a2e:370:7334")
         assert "2001:db8" not in _cleaned("2001:db8:85a3::8a2e:370:7334")
+
+    def test_ipv6_loopback_redacted(self):
+        # ::1 is the IPv6 loopback address and must be redacted
+        assert _cleaned("::1") == "0.0.0.0"
+        assert "0.0.0.0" in _cleaned("connected from ::1 on port 8080")
+
+    def test_ipv6_link_local_redacted(self):
+        # fe80::... are link-local addresses and must be redacted
+        assert "0.0.0.0" in _cleaned("fe80::1")
+        assert "fe80" not in _cleaned("fe80::1")
+        assert "0.0.0.0" in _cleaned("addr fe80::2a0:1122:3344:5566 link")
 
     def test_loopback_replaced(self):
         # 127.0.0.1 is an IPv4 address and should be redacted
@@ -386,8 +397,9 @@ class TestStrictFlag:
         src = tmp_path / "bad.jsonl"
         src.write_text("not valid json\n")
         out_dir = tmp_path / "out"
-        result = main([str(src), "--output-dir", str(out_dir), "--strict"])
-        assert result != 0
+        with pytest.raises(SystemExit) as exc_info:
+            main([str(src), "--output-dir", str(out_dir), "--strict"])
+        assert exc_info.value.code != 0
 
     def test_strict_returns_zero_on_clean_jsonl(self, tmp_path):
         src = tmp_path / "good.jsonl"
@@ -400,11 +412,23 @@ class TestStrictFlag:
         src = tmp_path / "bad.jsonl"
         src.write_text("not json\n")
         out_dir = tmp_path / "out"
-        main([str(src), "--output-dir", str(out_dir), "--strict"])
+        with pytest.raises(SystemExit):
+            main([str(src), "--output-dir", str(out_dir), "--strict"])
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
 
+    def test_strict_aborts_no_output_file(self, tmp_path):
+        """--strict aborts on first malformed line and writes no output file."""
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not valid json\n")
+        out_dir = tmp_path / "out"
+        with pytest.raises(SystemExit) as exc_info:
+            main([str(src), "--output-dir", str(out_dir), "--strict"])
+        assert exc_info.value.code != 0
+        assert not (out_dir / "bad.jsonl").exists()
+
     def test_strict_skips_malformed_line(self, tmp_path):
+        """--strict aborts at the first malformed line; no output file is created."""
         src = tmp_path / "mixed.jsonl"
         src.write_text(
             '{"type": "user"}\n'
@@ -412,10 +436,10 @@ class TestStrictFlag:
             '{"type": "assistant"}\n'
         )
         out_dir = tmp_path / "out"
-        main([str(src), "--output-dir", str(out_dir), "--strict"])
-        out_lines = [l for l in (out_dir / "mixed.jsonl").read_text().splitlines() if l.strip()]
-        assert len(out_lines) == 2
-        assert all(json.loads(l) for l in out_lines)
+        with pytest.raises(SystemExit) as exc_info:
+            main([str(src), "--output-dir", str(out_dir), "--strict"])
+        assert exc_info.value.code != 0
+        assert not (out_dir / "mixed.jsonl").exists()
 
     def test_warning_mentions_unicode_escape(self, tmp_path, capsys):
         src = tmp_path / "bad.jsonl"
@@ -526,6 +550,44 @@ class TestGitBranchRedaction:
         cleaned, counts = clean_record(record)
         assert "Claude" not in cleaned["gitBranch"]
         assert counts["git_branch"] == 1
+
+    def test_non_known_prefix_not_redacted(self):
+        """Branch names with non-standard prefixes are NOT redacted."""
+        assert _cleaned("v2/endpoint-t-data") == "v2/endpoint-t-data"
+
+    def test_fix_prefix_redacted(self):
+        assert "feature/redacted-branch" in _cleaned("fix/login-bug-t-ab12")
+
+    def test_chore_prefix_redacted(self):
+        assert "feature/redacted-branch" in _cleaned("chore/update-deps-t-xy99")
+
+
+# ---------------------------------------------------------------------------
+# Unicode fallback (malformed-line redaction path)
+# ---------------------------------------------------------------------------
+
+class TestUnicodeFallback:
+    def test_unicode_escape_preserved_after_redaction(self, tmp_path):
+        r"""Non-PII \uXXXX escapes in malformed lines survive as \uXXXX in output."""
+        # é is 'é' — not PII, should not be altered by redaction and should
+        # be re-encoded back to the escape form rather than written as raw UTF-8.
+        src = tmp_path / "utest.jsonl"
+        src.write_text("not json: caf\\u00e9 and secret@corp.com here\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "utest.jsonl").read_text()
+        assert "secret@corp.com" not in content
+        assert "\\u00e9" in content  # escape sequence preserved, not raw 'é'
+
+    def test_pii_unicode_escaped_at_sign_redacted(self, tmp_path):
+        r"""\\u0040 (@ sign) in a malformed line is decoded and redacted."""
+        src = tmp_path / "uescape2.jsonl"
+        src.write_text("not json: user\\u0040corp.com is here\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "uescape2.jsonl").read_text()
+        assert "corp.com" not in content
+        assert "user@example.com" in content
 
 
 # ---------------------------------------------------------------------------

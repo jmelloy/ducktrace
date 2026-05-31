@@ -47,9 +47,12 @@ _RE_IPV6 = re.compile(
     # Full 8-group form: exactly 7 colons separating 8 hex groups (no abbreviation)
     r"(?:\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b)"
     # Abbreviated form: one or more hex groups followed by :: and optional trailing groups
+    # (covers fe80::1, 2001:db8::8a2e:370:7334, etc.)
     r"|(?:\b(?:[0-9a-fA-F]{1,4}:)+:[0-9a-fA-F]{0,4}\b)"
-    # :: at the start followed by one or more groups (e.g. ::1, ::ffff:...)
+    # :: at the start followed by two or more groups (e.g. ::ffff:192.0.2.1)
     r"|(?:\b::(?:[0-9a-fA-F]{1,4}:){1,6}[0-9a-fA-F]{1,4}\b)"
+    # Loopback (::1) and other short bare-:: forms not preceded by word/colon chars
+    r"|(?<![:\w])::(?:[0-9a-fA-F]{1,4})?(?![:\w])"
 )
 
 # Anthropic API keys
@@ -76,11 +79,11 @@ _RE_UUID = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 
-# Git branch names with username/description-t-taskid pattern
-# Matches branches like "claude/my-feature-t-3c3q" and "Claude/Add-Auth-t-abc1"
+# Git branch names with known-prefix/description-t-taskid pattern.
+# Anchored to known prefixes to avoid redacting non-branch paths like "v2/endpoint-t-data".
 # re.IGNORECASE handles mixed-case prefixes (Claude/, Feature/, etc.)
 _RE_GIT_BRANCH = re.compile(
-    r"\b[a-z][a-z0-9_\-]*/[a-z0-9][a-z0-9_\-]+-t-[a-z0-9]{4,}\b",
+    r"\b(?:claude|feature|fix|chore)/[a-z0-9][a-z0-9_\-]+-t-[a-z0-9]{4,}\b",
     re.IGNORECASE,
 )
 
@@ -145,7 +148,7 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     s = sub(_RE_BEARER, r"\1[REDACTED]", s, "bearer_token")
     s = sub(_RE_EMAIL, "user@example.com", s, "email")
     s = sub(_RE_IPV4, "0.0.0.0", s, "ipv4")
-    s = sub(_RE_IPV6, "::", s, "ipv6")
+    s = sub(_RE_IPV6, "0.0.0.0", s, "ipv6")
     # Request/message IDs: replace with deterministic hash (preserves uniqueness/referential integrity)
     result, n = _RE_REQUEST_ID.subn(_hash_req_id, s)
     if n:
@@ -209,17 +212,17 @@ def _process_file(
     skip_malformed: bool = False,
     redact_keys: bool = False,
     strict: bool = False,
-) -> tuple[dict[str, int], bool]:
+) -> dict[str, int]:
     """Sanitize one JSONL file, write to output_dir atomically.
 
-    Returns (aggregate_counts, had_error). had_error is True only when --strict
-    is active and at least one malformed JSON line was encountered.
+    With --strict, aborts immediately (SystemExit(1)) on the first malformed JSON
+    line and removes the partial output file so no corrupted fixture is written.
     """
     total_counts: dict[str, int] = defaultdict(int)
-    had_error = False
     out_path = output_dir / src.name
 
     fd, tmp_path = tempfile.mkstemp(dir=output_dir, prefix=".tmp-", suffix=".jsonl")
+    _success = False
     try:
         with src.open(encoding="utf-8", errors="surrogateescape") as fin, os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fout:
             for line in fin:
@@ -238,8 +241,11 @@ def _process_file(
                         file=sys.stderr,
                     )
                     if strict:
-                        had_error = True
-                        continue
+                        print(
+                            f"ERROR: malformed JSON in {src.name} — aborting (--strict)",
+                            file=sys.stderr,
+                        )
+                        raise SystemExit(1)
                     if skip_malformed:
                         continue
                     line_counts: dict[str, int] = defaultdict(int)
@@ -251,6 +257,14 @@ def _process_file(
                         line,
                     )
                     redacted_line = _redact_string(decoded_line, line_counts)
+                    # Re-encode any non-ASCII characters back to \uXXXX so that
+                    # non-PII Unicode (e.g. accented letters) is preserved as
+                    # escape sequences rather than raw bytes in the output.
+                    redacted_line = re.sub(
+                        r"[^\x00-\x7f]",
+                        lambda m: f"\\u{ord(m.group(0)):04x}",
+                        redacted_line,
+                    )
                     for k, v in line_counts.items():
                         total_counts[k] += v
                     fout.write(redacted_line + "\n")
@@ -260,14 +274,17 @@ def _process_file(
                 for k, v in counts.items():
                     total_counts[k] += v
         os.replace(tmp_path, out_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        _success = True
+    except BaseException:
+        # Clean up the temp file on any failure (including SystemExit from --strict).
+        if not _success:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
         raise
 
-    return dict(total_counts), had_error
+    return dict(total_counts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -305,21 +322,18 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     grand_total: dict[str, int] = defaultdict(int)
-    any_strict_error = False
     for fpath in args.files:
         src = Path(fpath)
         if not src.exists():
             print(f"WARNING: {fpath} not found, skipping.", file=sys.stderr)
             continue
-        counts, had_error = _process_file(
+        counts = _process_file(
             src,
             output_dir,
             skip_malformed=args.skip_malformed,
             redact_keys=args.redact_keys,
             strict=args.strict,
         )
-        if had_error:
-            any_strict_error = True
         out_path = output_dir / src.name
         print(f"{src.name} -> {out_path}")
         if counts:
@@ -335,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         for label, n in sorted(grand_total.items()):
             print(f"  {label}: {n}")
 
-    return 1 if any_strict_error else 0
+    return 0
 
 
 if __name__ == "__main__":
