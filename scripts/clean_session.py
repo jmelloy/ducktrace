@@ -22,8 +22,9 @@ from pathlib import Path
 
 # /home/<user>/..., /Users/<user>/..., /root/...
 # Trailing path is optional so bare "/root" (no trailing slash) is also matched.
-# Terminator excludes common delimiters so closing parens/brackets/commas are not consumed.
-_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)(?:/[^\s\"'\`,;)\]]*)?")
+# Stops at whitespace, quotes, or common JSON/shell delimiters only — NOT at parens/brackets
+# so that paths like /home/alice/dir(1)/subdir are fully captured.
+_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)(?:/[^\s\"',;]+)?")
 
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
@@ -39,10 +40,14 @@ _RE_IPV4 = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
 )
 
-# IPv6 addresses (simplified; catches most real-world forms)
+# IPv6 addresses — require full 8-group form or explicit :: to avoid false positives
+# (e.g. CSS colours, version strings, and short hex fragments would match {2,7} groups).
 _RE_IPV6 = re.compile(
-    r"(?:\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b)"
+    # Full 8-group form: exactly 7 colons separating 8 hex groups (no abbreviation)
+    r"(?:\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b)"
+    # Abbreviated form: one or more hex groups followed by :: and optional trailing groups
     r"|(?:\b(?:[0-9a-fA-F]{1,4}:)+:[0-9a-fA-F]{0,4}\b)"
+    # :: at the start followed by one or more groups (e.g. ::1, ::ffff:...)
     r"|(?:\b::(?:[0-9a-fA-F]{1,4}:){1,6}[0-9a-fA-F]{1,4}\b)"
 )
 
@@ -81,7 +86,11 @@ _RE_REQUEST_ID = re.compile(r"\b(?:req|msg)_[A-Za-z0-9]{10,}\b")
 
 
 def _uuid_placeholder(match: re.Match) -> str:
-    """Return a deterministic UUID-shaped placeholder derived from the original UUID."""
+    """Return a deterministic UUID-shaped placeholder derived from the original UUID.
+
+    The input is lowercased before hashing, so uppercase UUIDs produce the same
+    placeholder as their lowercase equivalents. All output placeholders are lowercase hex.
+    """
     h = hashlib.sha256(match.group(0).lower().encode()).hexdigest()[:32]
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
@@ -184,7 +193,7 @@ def _process_file(
 
     fd, tmp_path = tempfile.mkstemp(dir=output_dir, prefix=".tmp-", suffix=".jsonl")
     try:
-        with src.open(encoding="utf-8", errors="replace") as fin, os.fdopen(fd, "w", encoding="utf-8") as fout:
+        with src.open(encoding="utf-8", errors="surrogateescape") as fin, os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as fout:
             for line in fin:
                 line = line.rstrip("\n")
                 if not line.strip():
@@ -202,6 +211,9 @@ def _process_file(
                     if skip_malformed:
                         continue
                     line_counts: dict[str, int] = defaultdict(int)
+                    # Limitation: unicode escapes like @ (@ sign) in the raw
+                    # line are not decoded before redaction, so PII hidden behind
+                    # JSON unicode escapes may survive this fallback path.
                     redacted_line = _redact_string(line, line_counts)
                     for k, v in line_counts.items():
                         total_counts[k] += v

@@ -69,15 +69,16 @@ class TestHomePaths:
         assert _counts("/home/alice/x /home/bob/y")["home_path"] == 2
 
     def test_path_with_parens_fully_captured(self):
-        # Whitelist regex: parens/brackets should not truncate the match
+        # The entire path including components after closing parens must be redacted.
+        # Previously, `)` in the exclusion set caused the match to stop at `(1`, leaving
+        # `)/subdir` in the output — that would make both assertions below coincidentally
+        # pass while still leaking path content.
         result = _cleaned("/home/user/dir(1)/subdir")
-        assert "(1)/subdir" not in result
-        assert "/home/user/[REDACTED]" in result
+        assert result == "/home/user/[REDACTED]"  # entire input consumed
 
     def test_path_with_brackets_fully_captured(self):
         result = _cleaned("/home/user/dir[0]/file")
-        assert "[0]/file" not in result
-        assert "/home/user/[REDACTED]" in result
+        assert result == "/home/user/[REDACTED]"  # entire input consumed
 
 
 class TestIPAddresses:
@@ -232,13 +233,17 @@ class TestCLI:
 
     def test_key_names_preserved_in_output(self, tmp_path):
         src = tmp_path / "k.jsonl"
-        record = {"type": "assistant", "sessionId": "abc-123", "cwd": "/home/bob/x"}
+        real_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        record = {"type": "assistant", "sessionId": real_uuid, "cwd": "/home/bob/x"}
         src.write_text(json.dumps(record) + "\n")
         out_dir = tmp_path / "out"
         main([str(src), "--output-dir", str(out_dir)])
         out = json.loads((out_dir / "k.jsonl").read_text())
         assert out["type"] == "assistant"
-        assert out["sessionId"] == "abc-123"
+        # Key name is preserved; the UUID value is hashed to a deterministic placeholder
+        assert "sessionId" in out
+        assert out["sessionId"] != real_uuid
+        assert _UUID_PATTERN.fullmatch(out["sessionId"]), "sessionId should be UUID-shaped after hashing"
         assert out["cwd"] == "/home/user/[REDACTED]"
 
     def test_output_filename_preserved(self, tmp_path):
