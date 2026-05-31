@@ -37,19 +37,19 @@ def _counts(s: str) -> dict:
 
 class TestHomePaths:
     def test_linux_home(self):
-        assert "/home/user/..." in _cleaned("/home/alice/projects/foo")
+        assert "/home/user/[REDACTED]" in _cleaned("/home/alice/projects/foo")
 
     def test_users_home(self):
-        assert "/home/user/..." in _cleaned("/Users/bob/code/bar")
+        assert "/home/user/[REDACTED]" in _cleaned("/Users/bob/code/bar")
 
     def test_root_home(self):
-        assert "/home/user/..." in _cleaned("/root/.ssh/id_rsa")
+        assert "/home/user/[REDACTED]" in _cleaned("/root/.ssh/id_rsa")
 
     def test_bare_root(self):
-        assert "/home/user/..." in _cleaned("/root")
+        assert "/home/user/[REDACTED]" in _cleaned("/root")
 
     def test_root_trailing_slash_only(self):
-        assert "/home/user/..." in _cleaned("/root/")
+        assert "/home/user/[REDACTED]" in _cleaned("/root/")
 
     def test_non_home_path_untouched(self):
         assert _cleaned("/etc/passwd") == "/etc/passwd"
@@ -72,12 +72,12 @@ class TestHomePaths:
         # Whitelist regex: parens/brackets should not truncate the match
         result = _cleaned("/home/user/dir(1)/subdir")
         assert "(1)/subdir" not in result
-        assert "/home/user/..." in result
+        assert "/home/user/[REDACTED]" in result
 
     def test_path_with_brackets_fully_captured(self):
         result = _cleaned("/home/user/dir[0]/file")
         assert "[0]/file" not in result
-        assert "/home/user/..." in result
+        assert "/home/user/[REDACTED]" in result
 
 
 class TestIPAddresses:
@@ -189,7 +189,7 @@ class TestStructurePreservation:
             ]
         }
         cleaned, _ = clean_record(record)
-        assert "/home/user/..." in cleaned["content"][0]["text"]
+        assert "/home/user/[REDACTED]" in cleaned["content"][0]["text"]
         assert cleaned["content"][1]["text"] == "normal text"
 
     def test_deterministic(self):
@@ -239,7 +239,7 @@ class TestCLI:
         out = json.loads((out_dir / "k.jsonl").read_text())
         assert out["type"] == "assistant"
         assert out["sessionId"] == "abc-123"
-        assert out["cwd"] == "/home/user/..."
+        assert out["cwd"] == "/home/user/[REDACTED]"
 
     def test_output_filename_preserved(self, tmp_path):
         src = tmp_path / "my-session-uuid.jsonl"

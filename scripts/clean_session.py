@@ -49,12 +49,12 @@ _RE_IPV6 = re.compile(
 # Anthropic API keys
 _RE_SK_ANT = re.compile(r"sk-ant-[A-Za-z0-9_\-]+")
 
-# Bearer tokens (requires token of ≥8 chars; short tokens fall through to _RE_AUTH_HEADER).
-# _RE_AUTH_HEADER is the unconditional catch-all fallback: it redacts the entire value
-# of any Authorization: header regardless of scheme or token length, covering cases
-# where _RE_BEARER won't fire (e.g. short tokens, custom schemes like "Token abc").
-_RE_BEARER = re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.=+/]{8,}")
+# Authorization header catch-all: redacts any value regardless of scheme or token length.
+# Applied BEFORE _RE_BEARER so that "Authorization: Bearer ..." lines are fully handled here;
+# _RE_BEARER only fires for bearer tokens that appear outside an Authorization header
+# (e.g. token values embedded in a JSON body or URL parameter).
 _RE_AUTH_HEADER = re.compile(r"(Authorization:\s*).+", re.IGNORECASE)
+_RE_BEARER = re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.=+/]{8,}")
 
 # Email addresses
 _RE_EMAIL = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
@@ -82,7 +82,7 @@ _RE_REQUEST_ID = re.compile(r"\b(?:req|msg)_[A-Za-z0-9]{10,}\b")
 
 def _uuid_placeholder(match: re.Match) -> str:
     """Return a deterministic UUID-shaped placeholder derived from the original UUID."""
-    h = hashlib.md5(match.group(0).lower().encode()).hexdigest()
+    h = hashlib.sha256(match.group(0).lower().encode()).hexdigest()[:32]
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
@@ -107,12 +107,12 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
 
     s = sub(_RE_TMP_WORKTREE, "/tmp/workdir", s, "tmp_worktree")
     s = sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", s, "tmp_worktree")
-    s = sub(_RE_HOME_PATH, "/home/user/...", s, "home_path")
+    s = sub(_RE_HOME_PATH, "/home/user/[REDACTED]", s, "home_path")
     s = sub(_RE_SK_ANT, "[REDACTED]", s, "api_key")
-    # _RE_BEARER fires first (specific); _RE_AUTH_HEADER is the catch-all fallback that
-    # redacts any remaining Authorization header value (e.g. non-Bearer schemes, short tokens).
-    s = sub(_RE_BEARER, r"\1[REDACTED]", s, "bearer_token")
+    # _RE_AUTH_HEADER first: redacts full Authorization: header value (any scheme/length).
+    # _RE_BEARER then catches any remaining bare Bearer tokens outside header context.
     s = sub(_RE_AUTH_HEADER, r"\1[REDACTED]", s, "auth_header")
+    s = sub(_RE_BEARER, r"\1[REDACTED]", s, "bearer_token")
     s = sub(_RE_EMAIL, "user@example.com", s, "email")
     s = sub(_RE_IPV4, "0.0.0.0", s, "ipv4")
     s = sub(_RE_IPV6, "::", s, "ipv6")
@@ -194,7 +194,9 @@ def _process_file(
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     print(
-                        f"WARNING: non-JSON line encountered in {src.name}",
+                        f"WARNING: non-JSON line encountered in {src.name} — "
+                        "regex fallback may miss deeply nested PII. "
+                        "Use --skip-malformed to drop these lines instead.",
                         file=sys.stderr,
                     )
                     if skip_malformed:
