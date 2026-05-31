@@ -22,10 +22,10 @@ from pathlib import Path
 
 # /home/<user>/..., /Users/<user>/..., /root/...
 # Trailing path is optional so bare "/root" (no trailing slash) is also matched.
-# Stops at whitespace, quotes, or common JSON/shell delimiters only — NOT at parens/brackets
-# so that paths like /home/alice/dir(1)/subdir are fully captured.
+# Stops at whitespace or quotes only — NOT at commas/semicolons/parens/brackets —
+# so that paths containing those characters (e.g. /home/alice/a,b/c) are fully captured.
 # Named group "prefix" lets the replacement function preserve the original prefix style.
-_RE_HOME_PATH = re.compile(r"/(?P<prefix>home|Users|root)(?:/[^\s\"',;]+)?")
+_RE_HOME_PATH = re.compile(r"/(?P<prefix>home|Users|root)(?:/[^\s\"']+)?")
 
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
@@ -77,9 +77,11 @@ _RE_UUID = re.compile(
 )
 
 # Git branch names with username/description-t-taskid pattern
-# Matches branches like "claude/my-feature-t-3c3q" but not "main" or "feature/normal"
+# Matches branches like "claude/my-feature-t-3c3q" and "Claude/Add-Auth-t-abc1"
+# re.IGNORECASE handles mixed-case prefixes (Claude/, Feature/, etc.)
 _RE_GIT_BRANCH = re.compile(
-    r"\b[a-z][a-z0-9_\-]*/[a-z0-9][a-z0-9_\-]+-t-[a-z0-9]{4,}\b"
+    r"\b[a-z][a-z0-9_\-]*/[a-z0-9][a-z0-9_\-]+-t-[a-z0-9]{4,}\b",
+    re.IGNORECASE,
 )
 
 # Anthropic API request/message IDs (e.g. req_01abc123..., msg_01abc123...)
@@ -175,6 +177,7 @@ def _redact_value(value, counts: dict[str, int], redact_keys: bool = False):
         return _redact_string(value, counts)
     if isinstance(value, dict):
         if redact_keys:
+            # redact_keys is the outer parameter, passed through unchanged to every recursive call
             return {_redact_string(k, counts): _redact_value(v, counts, redact_keys) for k, v in value.items()}
         return {k: _redact_value(v, counts, redact_keys) for k, v in value.items()}
     if isinstance(value, list):
@@ -205,14 +208,20 @@ def _process_file(
     output_dir: Path,
     skip_malformed: bool = False,
     redact_keys: bool = False,
-) -> dict[str, int]:
-    """Sanitize one JSONL file, write to output_dir atomically. Returns aggregate counts."""
+    strict: bool = False,
+) -> tuple[dict[str, int], bool]:
+    """Sanitize one JSONL file, write to output_dir atomically.
+
+    Returns (aggregate_counts, had_error). had_error is True only when --strict
+    is active and at least one malformed JSON line was encountered.
+    """
     total_counts: dict[str, int] = defaultdict(int)
+    had_error = False
     out_path = output_dir / src.name
 
     fd, tmp_path = tempfile.mkstemp(dir=output_dir, prefix=".tmp-", suffix=".jsonl")
     try:
-        with src.open(encoding="utf-8", errors="surrogateescape") as fin, os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as fout:
+        with src.open(encoding="utf-8", errors="surrogateescape") as fin, os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fout:
             for line in fin:
                 line = line.rstrip("\n")
                 if not line.strip():
@@ -223,10 +232,14 @@ def _process_file(
                 except json.JSONDecodeError:
                     print(
                         f"WARNING: non-JSON line encountered in {src.name} — "
-                        "regex fallback may miss deeply nested PII. "
-                        "Use --skip-malformed to drop these lines instead.",
+                        "regex fallback may miss PII encoded as JSON unicode escapes "
+                        "(e.g. \\u0040 for @). "
+                        "Use --skip-malformed to drop these lines, or --strict to exit non-zero.",
                         file=sys.stderr,
                     )
+                    if strict:
+                        had_error = True
+                        continue
                     if skip_malformed:
                         continue
                     line_counts: dict[str, int] = defaultdict(int)
@@ -254,7 +267,7 @@ def _process_file(
             pass
         raise
 
-    return dict(total_counts)
+    return dict(total_counts), had_error
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -279,6 +292,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="Skip lines that cannot be parsed as JSON instead of writing regex-redacted fallback",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help="Exit non-zero if any malformed JSON lines are encountered (implies --skip-malformed)",
+    )
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir).resolve()
@@ -286,14 +305,21 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     grand_total: dict[str, int] = defaultdict(int)
+    any_strict_error = False
     for fpath in args.files:
         src = Path(fpath)
         if not src.exists():
             print(f"WARNING: {fpath} not found, skipping.", file=sys.stderr)
             continue
-        counts = _process_file(
-            src, output_dir, skip_malformed=args.skip_malformed, redact_keys=args.redact_keys
+        counts, had_error = _process_file(
+            src,
+            output_dir,
+            skip_malformed=args.skip_malformed,
+            redact_keys=args.redact_keys,
+            strict=args.strict,
         )
+        if had_error:
+            any_strict_error = True
         out_path = output_dir / src.name
         print(f"{src.name} -> {out_path}")
         if counts:
@@ -309,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         for label, n in sorted(grand_total.items()):
             print(f"  {label}: {n}")
 
-    return 0
+    return 1 if any_strict_error else 0
 
 
 if __name__ == "__main__":

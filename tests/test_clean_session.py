@@ -378,6 +378,55 @@ class TestSkipMalformed:
 
 
 # ---------------------------------------------------------------------------
+# --strict flag tests
+# ---------------------------------------------------------------------------
+
+class TestStrictFlag:
+    def test_strict_returns_nonzero_on_malformed_json(self, tmp_path):
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not valid json\n")
+        out_dir = tmp_path / "out"
+        result = main([str(src), "--output-dir", str(out_dir), "--strict"])
+        assert result != 0
+
+    def test_strict_returns_zero_on_clean_jsonl(self, tmp_path):
+        src = tmp_path / "good.jsonl"
+        src.write_text(json.dumps({"type": "user"}) + "\n")
+        out_dir = tmp_path / "out"
+        result = main([str(src), "--output-dir", str(out_dir), "--strict"])
+        assert result == 0
+
+    def test_strict_still_warns(self, tmp_path, capsys):
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not json\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir), "--strict"])
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_strict_skips_malformed_line(self, tmp_path):
+        src = tmp_path / "mixed.jsonl"
+        src.write_text(
+            '{"type": "user"}\n'
+            'not valid json\n'
+            '{"type": "assistant"}\n'
+        )
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir), "--strict"])
+        out_lines = [l for l in (out_dir / "mixed.jsonl").read_text().splitlines() if l.strip()]
+        assert len(out_lines) == 2
+        assert all(json.loads(l) for l in out_lines)
+
+    def test_warning_mentions_unicode_escape(self, tmp_path, capsys):
+        src = tmp_path / "bad.jsonl"
+        src.write_text("not json\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        captured = capsys.readouterr()
+        assert "unicode" in captured.err.lower() or "\\u0040" in captured.err
+
+
+# ---------------------------------------------------------------------------
 # UUID redaction tests
 # ---------------------------------------------------------------------------
 
@@ -464,6 +513,19 @@ class TestGitBranchRedaction:
         content = (out_dir / "b.jsonl").read_text()
         assert "claude" not in content
         assert "feature/redacted-branch" in content
+
+    def test_uppercase_branch_is_redacted(self):
+        # Mixed-case prefix like "Claude/" must also be redacted (re.IGNORECASE)
+        result = _cleaned("Claude/Add-Auth-Feature-t-abc1")
+        assert "Claude" not in result
+        assert "Add-Auth-Feature" not in result
+        assert "feature/redacted-branch" in result
+
+    def test_uppercase_branch_in_record(self):
+        record = {"gitBranch": "Claude/Add-Auth-Feature-t-abc1"}
+        cleaned, counts = clean_record(record)
+        assert "Claude" not in cleaned["gitBranch"]
+        assert counts["git_branch"] == 1
 
 
 # ---------------------------------------------------------------------------
