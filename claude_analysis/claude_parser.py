@@ -54,33 +54,28 @@ def _tok_count(text: str) -> int:
         return 0
 
 def _estimate_thinking_tokens(content) -> int:
-    """Estimate token count for thinking/redacted_thinking blocks only.
+    """Estimate visible-thinking tokens from `thinking` blocks.
 
-    `thinking` blocks expose plain text — we use char count ÷ 4 as a rough 
-    heuristic (~4 chars per token on average).  `redacted_thinking` blocks
-    expose only base64-encoded encrypted data; we convert to estimated byte
-    count first (base64 len × 3/4), then divide by 4 bytes/token.
-    All other block types are skipped — their token counts come from the 
-    API-reported output_tokens value and must not be double-counted here.
+    This is an *informational breakdown* of the assistant's output — thinking
+    tokens are already billed inside the API's ``output_tokens``, so this value
+    must never be added on top of output when totalling (see aggregate.py).
+
+    Only the `thinking` text is counted. We deliberately do NOT count the
+    `signature` (an opaque cryptographic blob whose length is unrelated to
+    token usage — counting it inflated reasoning by ~len(sig)/4). Claude Code
+    strips the thinking text from transcripts, so this is usually 0; that's an
+    honest "unknown", not an underestimate to paper over with signature length.
+    `redacted_thinking` exposes only encrypted data and is likewise not
+    estimable, so it contributes 0.
     """
-    if not isinstance(content, list): 
-        return 0 
-    total = 0 
+    if not isinstance(content, list):
+        return 0
+    total = 0
     for block in content:
-        if not isinstance(block, dict): 
+        if not isinstance(block, dict):
             continue
-        btype = block.get("type", "") 
-        if btype == "thinking":
-            text = block.get("thinking") or ""
-            signature = block.get("signature", "")
-            if signature:
-                total += max(1, len(signature) // 4)  # signatures are also text, but typically much shorter than the visible thinking text, so count separately to avoid underestimating when thinking is redacted but signature is present
-            if text:
-                total += _tok_count(text)
-        elif btype == "redacted_thinking":
-            # data is base64; convert to approximate byte length then to tokens
-            data = block.get("data") or "" 
-            total += max(1, len(data) * 3 // 4 // 4) if data else 0
+        if block.get("type") == "thinking":
+            total += _tok_count(block.get("thinking") or "")
     return total
 
 def _count_input_tokens(content) -> int | None:
@@ -264,7 +259,11 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
     events: list[dict] = []
 
     def base_event(lineno, e, *, uuid_suffix=None):
-        uuid = e.get("uuid") or e.get("messageId") or e.get("leafUuid")
+        # NB: do not fall back to leafUuid — it points at *another* event (the
+        # conversation leaf this entry references), not this entry's identity.
+        # Using it as our own id collides with that event and corrupts the
+        # parent map (last-prompt entries have no uuid and would all collide).
+        uuid = e.get("uuid") or e.get("messageId")
         eid = uuid or f"{SOURCE}:{session_id}:L{lineno}"
         if uuid_suffix is not None:
             eid = f"{eid}#{uuid_suffix}"
