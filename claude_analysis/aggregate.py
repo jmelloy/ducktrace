@@ -76,7 +76,9 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
         "cache_read_tokens": cr,
         "cache_creation_tokens": cc,
         "reasoning_tokens": reasoning,
-        "total_tokens": inp + out + cr + cc + reasoning,
+        # reasoning/thinking tokens are already counted inside output_tokens by
+        # the API, so they are NOT added here (doing so double-counted them).
+        "total_tokens": inp + out + cr + cc,
         "stated_cost": _sum("stated_cost"),
         "inferred_cost": _sum("inferred_cost"),
         "pr_repositories": sorted(pr_repos),
