@@ -21,8 +21,10 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # /home/<user>/..., /Users/<user>/..., /root/...
+# Trailing path is optional so bare "/root" (no trailing slash) is also matched.
 # Terminator excludes common delimiters so closing parens/brackets/commas are not consumed.
-_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)/[^\s\"'\`,;)\]]+")
+_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)(?:/[^\s\"'\`,;)\]]*)?")
+
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
 _RE_TMP_WORKTREE = re.compile(r"/tmp/[^\s\"']*/w-[a-z0-9]+[^\s\"']*")
@@ -107,10 +109,10 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
     s = sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", s, "tmp_worktree")
     s = sub(_RE_HOME_PATH, "/home/user/...", s, "home_path")
     s = sub(_RE_SK_ANT, "[REDACTED]", s, "api_key")
-    # _RE_AUTH_HEADER fires before _RE_BEARER so a full Authorization header line
-    # is caught unconditionally before the bearer-specific pattern can partially match it.
-    s = sub(_RE_AUTH_HEADER, r"\1[REDACTED]", s, "auth_header")
+    # _RE_BEARER fires first (specific); _RE_AUTH_HEADER is the catch-all fallback that
+    # redacts any remaining Authorization header value (e.g. non-Bearer schemes, short tokens).
     s = sub(_RE_BEARER, r"\1[REDACTED]", s, "bearer_token")
+    s = sub(_RE_AUTH_HEADER, r"\1[REDACTED]", s, "auth_header")
     s = sub(_RE_EMAIL, "user@example.com", s, "email")
     s = sub(_RE_IPV4, "0.0.0.0", s, "ipv4")
     s = sub(_RE_IPV6, "::", s, "ipv6")

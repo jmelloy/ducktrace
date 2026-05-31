@@ -45,6 +45,12 @@ class TestHomePaths:
     def test_root_home(self):
         assert "/home/user/..." in _cleaned("/root/.ssh/id_rsa")
 
+    def test_bare_root(self):
+        assert "/home/user/..." in _cleaned("/root")
+
+    def test_root_trailing_slash_only(self):
+        assert "/home/user/..." in _cleaned("/root/")
+
     def test_non_home_path_untouched(self):
         assert _cleaned("/etc/passwd") == "/etc/passwd"
         assert _cleaned("/tmp/file.txt") == "/tmp/file.txt"
