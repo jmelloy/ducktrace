@@ -40,16 +40,18 @@ class TestHomePaths:
         assert "/home/user/[REDACTED]" in _cleaned("/home/alice/projects/foo")
 
     def test_users_home(self):
-        assert "/home/user/[REDACTED]" in _cleaned("/Users/bob/code/bar")
+        # Prefix style preserved: /Users/ stays /Users/ rather than becoming /home/
+        assert "/Users/user/[REDACTED]" in _cleaned("/Users/bob/code/bar")
 
     def test_root_home(self):
-        assert "/home/user/[REDACTED]" in _cleaned("/root/.ssh/id_rsa")
+        # /root paths keep /root prefix so the replacement isn't misleadingly Linux home-like
+        assert "/root/[REDACTED]" in _cleaned("/root/.ssh/id_rsa")
 
     def test_bare_root(self):
-        assert "/home/user/[REDACTED]" in _cleaned("/root")
+        assert "/root/[REDACTED]" in _cleaned("/root")
 
     def test_root_trailing_slash_only(self):
-        assert "/home/user/[REDACTED]" in _cleaned("/root/")
+        assert "/root/[REDACTED]" in _cleaned("/root/")
 
     def test_non_home_path_untouched(self):
         assert _cleaned("/etc/passwd") == "/etc/passwd"
@@ -278,6 +280,17 @@ class TestCLI:
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
         assert "non-JSON" in captured.err
+
+    def test_invalid_json_unicode_escape_decoded(self, tmp_path):
+        # @ is the @ sign — a raw JSON line with a unicode-escaped email must
+        # still be redacted even though the @ is not literally present in the text.
+        src = tmp_path / "uescape.jsonl"
+        src.write_text("not json: user\\u0040corp.com is here\n")
+        out_dir = tmp_path / "out"
+        main([str(src), "--output-dir", str(out_dir)])
+        content = (out_dir / "uescape.jsonl").read_text()
+        assert "corp.com" not in content
+        assert "user@example.com" in content
 
 
 # ---------------------------------------------------------------------------

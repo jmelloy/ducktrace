@@ -24,7 +24,8 @@ from pathlib import Path
 # Trailing path is optional so bare "/root" (no trailing slash) is also matched.
 # Stops at whitespace, quotes, or common JSON/shell delimiters only — NOT at parens/brackets
 # so that paths like /home/alice/dir(1)/subdir are fully captured.
-_RE_HOME_PATH = re.compile(r"/(?:home|Users|root)(?:/[^\s\"',;]+)?")
+# Named group "prefix" lets the replacement function preserve the original prefix style.
+_RE_HOME_PATH = re.compile(r"/(?P<prefix>home|Users|root)(?:/[^\s\"',;]+)?")
 
 
 # /tmp/ paths containing worktree-style worker IDs (e.g. /tmp/pioneer-work/... or /tmp/w-abc123/...)
@@ -85,6 +86,24 @@ _RE_GIT_BRANCH = re.compile(
 _RE_REQUEST_ID = re.compile(r"\b(?:req|msg)_[A-Za-z0-9]{10,}\b")
 
 
+def _home_path_replacement(match: re.Match) -> str:
+    """Replace home paths while preserving the prefix style.
+
+    /home/<user>/...  → /home/user/[REDACTED]
+    /Users/<user>/... → /Users/user/[REDACTED]
+    /root/...         → /root/[REDACTED]
+
+    Keeping the prefix avoids misleading normalisation where /root/.ssh would
+    otherwise become /home/user/[REDACTED], implying a Linux home-dir path.
+    """
+    prefix = match.group("prefix")
+    if prefix == "Users":
+        return "/Users/user/[REDACTED]"
+    if prefix == "root":
+        return "/root/[REDACTED]"
+    return "/home/user/[REDACTED]"
+
+
 def _uuid_placeholder(match: re.Match) -> str:
     """Return a deterministic UUID-shaped placeholder derived from the original UUID.
 
@@ -116,7 +135,7 @@ def _redact_string(s: str, counts: dict[str, int]) -> str:
 
     s = sub(_RE_TMP_WORKTREE, "/tmp/workdir", s, "tmp_worktree")
     s = sub(_RE_TMP_WORKTREE_HYPH, "-tmp-workdir", s, "tmp_worktree")
-    s = sub(_RE_HOME_PATH, "/home/user/[REDACTED]", s, "home_path")
+    s = sub(_RE_HOME_PATH, _home_path_replacement, s, "home_path")
     s = sub(_RE_SK_ANT, "[REDACTED]", s, "api_key")
     # _RE_AUTH_HEADER first: redacts full Authorization: header value (any scheme/length).
     # _RE_BEARER then catches any remaining bare Bearer tokens outside header context.
@@ -211,10 +230,14 @@ def _process_file(
                     if skip_malformed:
                         continue
                     line_counts: dict[str, int] = defaultdict(int)
-                    # Limitation: unicode escapes like @ (@ sign) in the raw
-                    # line are not decoded before redaction, so PII hidden behind
-                    # JSON unicode escapes may survive this fallback path.
-                    redacted_line = _redact_string(line, line_counts)
+                    # Decode JSON-style \uXXXX escapes so PII encoded as unicode
+                    # (e.g. @ for the @ sign) is visible to the redaction patterns.
+                    decoded_line = re.sub(
+                        r"\\u([0-9a-fA-F]{4})",
+                        lambda m: chr(int(m.group(1), 16)),
+                        line,
+                    )
+                    redacted_line = _redact_string(decoded_line, line_counts)
                     for k, v in line_counts.items():
                         total_counts[k] += v
                     fout.write(redacted_line + "\n")
