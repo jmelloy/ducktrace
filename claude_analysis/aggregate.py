@@ -33,6 +33,7 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
     files = {ev["file_path"] for ev in events if ev.get("file_path") and ev.get("role") == "tool_use"}
 
     inp, out = _sum("input_tokens") or 0, _sum("output_tokens") or 0
+    calc_inp = _sum("calculated_input_tokens") or 0
     cr, cc = _sum("cache_read_tokens") or 0, _sum("cache_creation_tokens") or 0
     reasoning = _sum("reasoning_tokens") or 0
 
@@ -72,6 +73,7 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
         "tool_call_count": tool_calls,
         "files_touched": len(files),
         "input_tokens": inp,
+        "calculated_input_tokens": calc_inp or None,
         "output_tokens": out,
         "cache_read_tokens": cr,
         "cache_creation_tokens": cc,
