@@ -296,6 +296,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             "pr_action": None,
             "referenced_repository": None,
             "input_tokens": None,
+            "calculated_input_tokens": None,
             "output_tokens": None,
             "cache_read_tokens": None,
             "cache_creation_tokens": None,
@@ -359,9 +360,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["subtype"] = "text"
             ev["text"] = content
             ev["attributes"] = {"line": line_meta, "message": msg_meta, "block": content}
-            ev["input_tokens"] = _count_input_tokens(content)
+            ev["calculated_input_tokens"] = _count_input_tokens(content)
             parent_list = event_parent_map.get(ev["parent_id"], [])
-            while len(parent_list) == 1 and parent_list[0].get("input_tokens") is None and parent_list[0]["parent_id"] is not None:
+            while len(parent_list) == 1 and parent_list[0].get("calculated_input_tokens") is None and parent_list[0]["parent_id"] is not None:
                 parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
 
             _attach_usage(ev, e, msg, main_model, parent=parent_list)
@@ -375,10 +376,10 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev = base_event(lineno, e)
             ev["role"] = t
             ev["attributes"] = {"line": line_meta, "message": msg_meta}
-            ev["input_tokens"] = _count_input_tokens(content)
+            ev["calculated_input_tokens"] = _count_input_tokens(content)
             ev["reasoning_tokens"] = _estimate_thinking_tokens(content)
             parent_list = event_parent_map.get(ev["parent_id"], [])
-            while len(parent_list) == 1 and parent_list[0].get("input_tokens") is None and parent_list[0]["parent_id"] is not None:
+            while len(parent_list) == 1 and parent_list[0].get("calculated_input_tokens") is None and parent_list[0]["parent_id"] is not None:
                 parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
             _attach_usage(ev, e, msg, main_model, parent=parent_list)
             events.append(ev)
@@ -400,7 +401,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             elif btype == "text":
                 ev["role"] = t
                 ev["text"] = block.get("text", "")
-                ev["input_tokens"] = _count_input_tokens(block.get("text", ""))
+                if t == "user":
+                    ev["calculated_input_tokens"] = _count_input_tokens(block.get("text", ""))
                 mine(ev)
             elif btype == "tool_use":
                 ev["role"] = "tool_use"
@@ -423,8 +425,8 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["tool_use_id"] = block.get("tool_use_id")
                 ev["text"] = _content_text(block.get("content"))
                 
-                ev["input_tokens"] = _count_input_tokens(block.get("content"))
-                
+                ev["calculated_input_tokens"] = _count_input_tokens(block.get("content"))
+
                 # Attribute the result to a file when the structured result names one,
                 # but leave line counts on the tool_use event to avoid double counting.
                 if isinstance(tool_use_result, dict):
@@ -439,7 +441,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["text"] = block.get("text") if isinstance(block, dict) else None
             event_parent_map[ev["event_id"].split("#")[0]] = event_parent_map.get(ev["event_id"].split("#")[0], [])  + [ev]  # track all events for this message for later token rolling
             parent_list = event_parent_map.get(ev["parent_id"], [])
-            while len(parent_list) == 1 and parent_list[0].get("input_tokens") is None and parent_list[0]["parent_id"] is not None:
+            while len(parent_list) == 1 and parent_list[0].get("calculated_input_tokens") is None and parent_list[0]["parent_id"] is not None:
                 parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
             _attach_usage(ev, e, msg, main_model, parent=parent_list) 
             events.append(ev)
@@ -468,34 +470,42 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
     for (message_id, request_id), ev_list in event_usage.items():
         if len(ev_list) <= 1:
             continue
-        input_tokens = sum(ev.get("input_tokens") or 0 for ev in ev_list)
-        
+        # raw input_tokens: all blocks share the same usage block, so all have the
+        # same value — take the first non-None rather than summing
+        raw_input_tokens = next(
+            (ev.get("input_tokens") for ev in ev_list if ev.get("input_tokens") is not None),
+            None,
+        )
+        # calculated_input_tokens: each block may have contributed different amounts;
+        # sum them up (parent-rolled tokens land on the first assistant block)
+        calculated_input_tokens = sum(ev.get("calculated_input_tokens") or 0 for ev in ev_list) or None
+
         final = ev_list[-1]
         for i, ev in enumerate(ev_list):
             if i > 0:
                 ev["input_tokens"] = None
+                ev["calculated_input_tokens"] = None
                 ev["output_tokens"] = None
                 ev["cache_read_tokens"] = None
                 ev["cache_creation_tokens"] = None
                 ev["reasoning_tokens"] = None
                 ev["stated_cost"] = None
                 ev["inferred_cost"] = None
-                if "usage" in ev["attributes"]["message"]:
-                    ev["attributes"]["message"].pop("usage", None)  # also clear from raw JSON to avoid 
+                if isinstance(ev.get("attributes"), dict) and isinstance(ev["attributes"].get("message"), dict):
+                    ev["attributes"]["message"].pop("usage", None)
             else:
-                ev["input_tokens"] = input_tokens  # roll input tokens forward to last event in the group, where cost is attributed
+                ev["input_tokens"] = raw_input_tokens
+                ev["calculated_input_tokens"] = calculated_input_tokens
                 ev["output_tokens"] = final.get("output_tokens")
                 ev["cache_read_tokens"] = final.get("cache_read_tokens")
                 ev["cache_creation_tokens"] = final.get("cache_creation_tokens")
-                ev["stated_cost"] = final.get("stated_cost")
-                
-                ev["inferred_cost"] = pricing.claude_cost(
-                    ev.get("model") or main_model,
-                    input_tokens,
-                    ev.get("output_tokens") or 0,
-                    ev.get("cache_creation_tokens") or 0,
-                    ev.get("cache_read_tokens") or 0,
-                )
+                model = ev.get("model") or main_model
+                out = ev.get("output_tokens") or 0
+                cc = ev.get("cache_creation_tokens") or 0
+                cr = ev.get("cache_read_tokens") or 0
+                calc_cost = pricing.claude_cost(model, calculated_input_tokens or 0, out, cc, cr)
+                ev["stated_cost"] = final.get("stated_cost") or (calc_cost or None)
+                ev["inferred_cost"] = pricing.claude_cost(model, raw_input_tokens or 0, out, cc, cr)
     # --- per-file session metadata (aggregated once per session in build) -----
     meta = {
         "session_id": session_id,
@@ -531,25 +541,29 @@ def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str, pare
     if not isinstance(usage, dict):
         return
     model = msg.get("model") or fallback_model
-    # input_tokens is threaded forward from the user event after the loop; use
-    # API value here only for cost calculation.
-    
-    inp = ev.get("input_tokens") or usage.get("input_tokens", 0) or 0
-    if inp == 1:
-        inp = 0 # claude weirdness
+
+    raw_inp = usage.get("input_tokens", 0) or 0
+
+    # calculated_input_tokens: start from any local estimate on this block,
+    # then roll in parent (user-turn) contributions.
+    calc_inp = ev.get("calculated_input_tokens") or 0
+    if calc_inp == 1:
+        calc_inp = 0  # claude weirdness
     if parent:
         for p in parent:
-            if p and p.get("input_tokens") is not None:
-                inp += p["input_tokens"]
-                p["input_tokens"] = None  # clear from parent to avoid double counting
+            if p and p.get("calculated_input_tokens") is not None:
+                calc_inp += p["calculated_input_tokens"]
+                p["calculated_input_tokens"] = None  # clear to avoid double-counting
 
     cc = usage.get("cache_creation_input_tokens", 0) or 0
     cr = usage.get("cache_read_input_tokens", 0) or 0
-    
-    out = usage.get("output_tokens", 0) 
-    ev["input_tokens"] = inp
+    out = usage.get("output_tokens", 0)
+
+    ev["input_tokens"] = raw_inp or None
+    ev["calculated_input_tokens"] = calc_inp or None
     ev["output_tokens"] = out
     ev["cache_creation_tokens"] = cc
     ev["cache_read_tokens"] = cr
-    ev["stated_cost"] = e.get("costUSD") or None
-    ev["inferred_cost"] = pricing.claude_cost(model, inp, out, cc, cr)
+    calc_cost = pricing.claude_cost(model, calc_inp, out, cc, cr)
+    ev["stated_cost"] = e.get("costUSD") or (calc_cost or None)
+    ev["inferred_cost"] = pricing.claude_cost(model, raw_inp, out, cc, cr)

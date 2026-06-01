@@ -54,12 +54,13 @@ EVENT_COLUMNS: dict[str, str] = {
     "pr_action": "VARCHAR",             # 'pr-link' or 'gh pr <verb>'
     "referenced_repository": "VARCHAR", # owner/repo mined from --repo / PR URL
     "input_tokens": "BIGINT",
+    "calculated_input_tokens": "BIGINT",
     "output_tokens": "BIGINT",
     "cache_read_tokens": "BIGINT",
     "cache_creation_tokens": "BIGINT",
     "reasoning_tokens": "BIGINT",
-    "stated_cost": "DOUBLE",        # costUSD from the JSONL line (when present)
-    "inferred_cost": "DOUBLE",      # computed from token counts + pricing table
+    "stated_cost": "DOUBLE",        # costUSD if present, else computed from calculated_input_tokens
+    "inferred_cost": "DOUBLE",      # computed from raw input_tokens (usage payload)
     "text": "VARCHAR",              # extracted body/text (may be large)
     "attributes": "JSON",           # full raw entry (lossless)
 }
@@ -86,6 +87,7 @@ SESSION_COLUMNS: dict[str, str] = {
     "tool_call_count": "INTEGER",
     "files_touched": "INTEGER",
     "input_tokens": "BIGINT",
+    "calculated_input_tokens": "BIGINT",
     "output_tokens": "BIGINT",
     "cache_read_tokens": "BIGINT",
     "cache_creation_tokens": "BIGINT",
