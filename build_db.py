@@ -3,11 +3,12 @@
 
 Usage:
   python build_db.py [--db data/sessions.duckdb]
-                     [--source claude|codex|all]
+                     [--source claude|codex|pi|all]
                      [--reset] [--limit N] [--quiet]
 
 Discovers session files in the standard locations (overridable via
-CLAUDE_ANALYSIS_CLAUDE_PATH / CLAUDE_ANALYSIS_CODEX_PATH, comma-separated) and
+CLAUDE_ANALYSIS_CLAUDE_PATH / CLAUDE_ANALYSIS_CODEX_PATH /
+CLAUDE_ANALYSIS_PI_PATH, comma-separated) and
 parses each into event rows plus per-file session metadata. A session can span
 several files (Claude sub-agent transcripts under ``<session>/subagents/``, and
 resumes), so events are grouped by ``session_id`` and each session is aggregated
@@ -24,7 +25,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from claude_analysis import claude_parser, codex_parser, pricing
+from claude_analysis import claude_parser, codex_parser, pi_parser, pricing
 from claude_analysis.aggregate import aggregate_session
 from claude_analysis.db import Store
 
@@ -132,7 +133,7 @@ def _ingest(
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="data/sessions.duckdb", help="output DuckDB path")
-    ap.add_argument("--source", choices=("claude", "codex", "all"), default="all")
+    ap.add_argument("--source", choices=("claude", "codex", "pi", "all"), default="all")
     ap.add_argument("--reset", action="store_true", help="clear existing rows first")
     ap.add_argument("--limit", type=int, default=0, help="max files per source (0 = all)")
     ap.add_argument("--no-canonicalize", action="store_true",
@@ -180,6 +181,11 @@ def main() -> None:
         all_new_stats.extend(ns)
         if not args.quiet and skipped:
             print(f"[codex] skipped {skipped} unchanged file(s)", file=sys.stderr)
+    if args.source in ("pi", "all"):
+        n, skipped, ns = _ingest(pi_parser, events_by, meta_by, **ingest_kwargs)
+        all_new_stats.extend(ns)
+        if not args.quiet and skipped:
+            print(f"[pi] skipped {skipped} unchanged file(s)", file=sys.stderr)
 
     # aggregate each session once over the union of its (deduped) events
     total_e = 0
