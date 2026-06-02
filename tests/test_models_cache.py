@@ -43,8 +43,9 @@ SAMPLE_API = {
 }
 
 
-def _make_http_mock(data: dict) -> MagicMock:
+def _make_http_mock(data: dict, status: int = 200) -> MagicMock:
     mock_resp = MagicMock()
+    mock_resp.status = status
     mock_resp.read.return_value = json.dumps(data).encode()
     mock_resp.__enter__ = lambda s: s
     mock_resp.__exit__ = MagicMock(return_value=False)
@@ -166,6 +167,56 @@ class TestGetModels:
             mc.get_models()
         assert cache_file.exists()
 
+    def test_non_200_response_falls_back_to_stale_cache(self, tmp_path):
+        cache_file = tmp_path / "models.json"
+        cache_file.write_text(json.dumps({"_ts": time.time() - 90_000, "data": SAMPLE_API}))
+        with patch.object(mc, "CACHE_PATH", cache_file), \
+             patch("urllib.request.urlopen", return_value=_make_http_mock({}, status=500)):
+            result = mc.get_models()
+        assert result == SAMPLE_API
+
+    def test_non_200_no_cache_returns_empty(self, tmp_path):
+        cache_file = tmp_path / "missing.json"
+        with patch.object(mc, "CACHE_PATH", cache_file), \
+             patch("urllib.request.urlopen", return_value=_make_http_mock({}, status=503)):
+            result = mc.get_models()
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# get_models: offline mode
+# ---------------------------------------------------------------------------
+
+class TestGetModelsOfflineMode:
+    def test_offline_uses_stale_cache_without_network(self, tmp_path, monkeypatch):
+        cache_file = tmp_path / "models.json"
+        cache_file.write_text(json.dumps({"_ts": time.time() - 90_000, "data": SAMPLE_API}))
+        monkeypatch.setenv("DUCKTRACE_MODELS_CACHE_OFFLINE", "1")
+        with patch.object(mc, "CACHE_PATH", cache_file), \
+             patch("urllib.request.urlopen") as mock_open:
+            result = mc.get_models()
+        mock_open.assert_not_called()
+        assert result == SAMPLE_API
+
+    def test_offline_no_cache_returns_empty(self, tmp_path, monkeypatch):
+        cache_file = tmp_path / "missing.json"
+        monkeypatch.setenv("DUCKTRACE_MODELS_CACHE_OFFLINE", "1")
+        with patch.object(mc, "CACHE_PATH", cache_file), \
+             patch("urllib.request.urlopen") as mock_open:
+            result = mc.get_models()
+        mock_open.assert_not_called()
+        assert result == {}
+
+    def test_offline_fresh_cache_still_used(self, tmp_path, monkeypatch):
+        cache_file = tmp_path / "models.json"
+        cache_file.write_text(json.dumps({"_ts": time.time(), "data": SAMPLE_API}))
+        monkeypatch.setenv("DUCKTRACE_MODELS_CACHE_OFFLINE", "1")
+        with patch.object(mc, "CACHE_PATH", cache_file), \
+             patch("urllib.request.urlopen") as mock_open:
+            result = mc.get_models()
+        mock_open.assert_not_called()
+        assert result == SAMPLE_API
+
 
 # ---------------------------------------------------------------------------
 # find_model_cost
@@ -216,6 +267,48 @@ class TestFindModelCost:
             cost = mc.find_model_cost("claude-bedrock-model")
         assert cost is not None
         assert cost["input"] == 4.0
+
+    def test_zero_input_price_treated_as_missing(self):
+        data = {
+            "anthropic": {
+                "models": {
+                    "zero-input-model": {
+                        "cost": {"input": 0, "output": 15.0}
+                    }
+                }
+            }
+        }
+        with patch.object(mc, "get_models", return_value=data):
+            cost = mc.find_model_cost("zero-input-model")
+        assert cost is None
+
+    def test_zero_output_price_treated_as_missing(self):
+        data = {
+            "anthropic": {
+                "models": {
+                    "zero-output-model": {
+                        "cost": {"input": 3.0, "output": 0}
+                    }
+                }
+            }
+        }
+        with patch.object(mc, "get_models", return_value=data):
+            cost = mc.find_model_cost("zero-output-model")
+        assert cost is None
+
+    def test_non_numeric_price_treated_as_missing(self):
+        data = {
+            "anthropic": {
+                "models": {
+                    "bad-price-model": {
+                        "cost": {"input": "not-a-number", "output": 15.0}
+                    }
+                }
+            }
+        }
+        with patch.object(mc, "get_models", return_value=data):
+            cost = mc.find_model_cost("bad-price-model")
+        assert cost is None
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +377,44 @@ class TestClaudePricingFromApi:
         with patch.object(mc, "get_models", return_value={}):
             p = claude_pricing("claude-totally-unknown-xyz")
         assert p is None
+
+    def test_api_missing_cache_rates_fall_back_to_hardcoded(self):
+        # models.dev returns input/output but omits cache_read / cache_write;
+        # hardcoded table has correct cache rates — those should be used.
+        api_data = {
+            "anthropic": {
+                "models": {
+                    "claude-3-haiku-20240307": {
+                        "cost": {"input": 0.25, "output": 1.25}
+                        # cache_read and cache_write intentionally absent
+                    }
+                }
+            }
+        }
+        with patch.object(mc, "get_models", return_value=api_data):
+            p = claude_pricing("claude-3-haiku-20240307")
+        assert p is not None
+        assert p.input == pytest.approx(0.25 / 1e6)
+        assert p.output == pytest.approx(1.25 / 1e6)
+        # Hardcoded cache rates for claude-3-haiku-20240307: read=0.03/M, write=0.3/M
+        assert p.cache_read == pytest.approx(0.03 / 1e6)
+        assert p.cache_write == pytest.approx(0.3 / 1e6)
+
+    def test_api_with_full_cache_rates_not_overridden_by_hardcoded(self):
+        api_data = {
+            "anthropic": {
+                "models": {
+                    "claude-3-haiku-20240307": {
+                        "cost": {"input": 0.25, "output": 1.25, "cache_read": 0.1, "cache_write": 0.5}
+                    }
+                }
+            }
+        }
+        with patch.object(mc, "get_models", return_value=api_data):
+            p = claude_pricing("claude-3-haiku-20240307")
+        assert p is not None
+        assert p.cache_read == pytest.approx(0.1 / 1e6)
+        assert p.cache_write == pytest.approx(0.5 / 1e6)
 
 
 class TestCodexPricingFromApi:

@@ -13,10 +13,13 @@ Cost model:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
 from claude_analysis.models_cache import find_model_cost
+
+logger = logging.getLogger(__name__)
 
 _M = 1_000_000.0
 _DATE_SUFFIX_RE = re.compile(r"-\d{8}$")
@@ -157,6 +160,10 @@ def _api_pricing(model_id: str) -> ModelPricing | None:
     Tries the raw model ID first; if not found, strips an 8-digit date suffix
     (e.g. ``-20260301``) and retries so versioned canonical IDs resolve to
     the dateless IDs used by models.dev.
+
+    NOTE: callers should merge the returned pricing with hardcoded values so
+    that cache rates fall back to the hardcoded table when the API omits them
+    (models.dev does not always include cache_read / cache_write).
     """
     cost = find_model_cost(model_id)
     if cost is None:
@@ -173,24 +180,57 @@ def _api_pricing(model_id: str) -> ModelPricing | None:
     )
 
 
+def _merge_cache_rates(api: ModelPricing, hardcoded: ModelPricing | None) -> ModelPricing:
+    """Return *api* pricing, filling in zero cache rates from *hardcoded* if available."""
+    if hardcoded is None:
+        return api
+    if api.cache_read > 0 and api.cache_write > 0:
+        return api
+    return ModelPricing(
+        input=api.input,
+        output=api.output,
+        cache_read=api.cache_read if api.cache_read > 0 else hardcoded.cache_read,
+        cache_write=api.cache_write if api.cache_write > 0 else hardcoded.cache_write,
+    )
+
+
 def claude_pricing(model: str) -> ModelPricing | None:
+    """Return per-token pricing for a Claude model.
+
+    PRECEDENCE: models.dev API data is preferred over the hardcoded table for
+    input/output rates.  If the API omits cache rates (cache_read / cache_write),
+    hardcoded rates are used as a fallback.  If models.dev ever returns incorrect
+    input/output prices for a well-known model, those wrong rates will be used;
+    monitor logs at DEBUG level for pricing source details.
+    """
     model = (model or "").strip()
     if model.startswith("anthropic/"):
         model = model[len("anthropic/"):]
     api = _api_pricing(model)
+    hardcoded = _lookup(_CLAUDE, _CLAUDE_ALIASES, model)
     if api is not None:
-        return api
-    return _lookup(_CLAUDE, _CLAUDE_ALIASES, model)
+        logger.debug("claude_pricing(%s): using models.dev API rates (input=%s, output=%s)", model, api.input, api.output)
+        return _merge_cache_rates(api, hardcoded)
+    return hardcoded
 
 
 def codex_pricing(model: str) -> ModelPricing | None:
+    """Return per-token pricing for a Codex/OpenAI model.
+
+    PRECEDENCE: models.dev API data is preferred over the hardcoded table for
+    input/output rates.  If the API omits cache rates, hardcoded rates are used
+    as a fallback.  If models.dev ever returns incorrect prices, those wrong
+    rates will be used; monitor logs at DEBUG level for pricing source details.
+    """
     model = (model or "").strip()
     if model.startswith("openai/"):
         model = model[len("openai/"):]
     api = _api_pricing(model)
+    hardcoded = _lookup(_CODEX, _CODEX_ALIASES, model)
     if api is not None:
-        return api
-    return _lookup(_CODEX, _CODEX_ALIASES, model)
+        logger.debug("codex_pricing(%s): using models.dev API rates (input=%s, output=%s)", model, api.input, api.output)
+        return _merge_cache_rates(api, hardcoded)
+    return hardcoded
 
 
 def claude_cost(

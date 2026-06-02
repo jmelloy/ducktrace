@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import time
 import urllib.request
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 MODELS_URL = "https://models.dev/api.json"
 CACHE_PATH = Path.home() / ".cache" / "ducktrace" / "models.json"
@@ -31,12 +35,22 @@ def _cache_write(data: dict) -> None:
 
 
 def get_models() -> dict:
-    """Return models.dev API payload, fetching from network if the cache is stale."""
+    """Return models.dev API payload, fetching from network if the cache is stale.
+
+    Set ``DUCKTRACE_MODELS_CACHE_OFFLINE=1`` to disable network calls entirely
+    and use only the on-disk cache (or an empty dict as last resort).  This is
+    useful in CI/test environments where outbound network access is restricted.
+    """
     cached, age = _cache_load()
     if cached is not None and age < TTL_SECONDS:
         return cached
+    if os.environ.get("DUCKTRACE_MODELS_CACHE_OFFLINE"):
+        logger.debug("DUCKTRACE_MODELS_CACHE_OFFLINE set; skipping network fetch")
+        return cached if cached is not None else {}
     try:
         with urllib.request.urlopen(MODELS_URL, timeout=10) as resp:
+            if resp.status != 200:
+                raise ValueError(f"models.dev returned HTTP {resp.status}")
             data = json.loads(resp.read())
         _cache_write(data)
         return data
@@ -65,6 +79,12 @@ def find_model_cost(model_id: str) -> Optional[dict]:
         models = data.get(provider_id, {}).get("models", {})
         if model_id in models:
             cost = models[model_id].get("cost")
-            if cost and "input" in cost and "output" in cost:
+            inp = cost.get("input") if cost else None
+            out = cost.get("output") if cost else None
+            if (
+                cost
+                and isinstance(inp, (int, float)) and inp > 0
+                and isinstance(out, (int, float)) and out > 0
+            ):
                 return cost
     return None
