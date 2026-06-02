@@ -13,9 +13,13 @@ Cost model:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
+from claude_analysis.models_cache import find_model_cost
+
 _M = 1_000_000.0
+_DATE_SUFFIX_RE = re.compile(r"-\d{8}$")
 
 
 @dataclass(frozen=True)
@@ -147,10 +151,35 @@ def _lookup(table, aliases, model: str) -> ModelPricing | None:
     return None
 
 
+def _api_pricing(model_id: str) -> ModelPricing | None:
+    """Build ModelPricing from the models.dev API cache.
+
+    Tries the raw model ID first; if not found, strips an 8-digit date suffix
+    (e.g. ``-20260301``) and retries so versioned canonical IDs resolve to
+    the dateless IDs used by models.dev.
+    """
+    cost = find_model_cost(model_id)
+    if cost is None:
+        stripped = _DATE_SUFFIX_RE.sub("", model_id)
+        if stripped != model_id:
+            cost = find_model_cost(stripped)
+    if cost is None:
+        return None
+    return _mk(
+        cost.get("input", 0.0),
+        cost.get("output", 0.0),
+        cost.get("cache_read", 0.0),
+        cost.get("cache_write", 0.0),
+    )
+
+
 def claude_pricing(model: str) -> ModelPricing | None:
     model = (model or "").strip()
     if model.startswith("anthropic/"):
         model = model[len("anthropic/"):]
+    api = _api_pricing(model)
+    if api is not None:
+        return api
     return _lookup(_CLAUDE, _CLAUDE_ALIASES, model)
 
 
@@ -158,6 +187,9 @@ def codex_pricing(model: str) -> ModelPricing | None:
     model = (model or "").strip()
     if model.startswith("openai/"):
         model = model[len("openai/"):]
+    api = _api_pricing(model)
+    if api is not None:
+        return api
     return _lookup(_CODEX, _CODEX_ALIASES, model)
 
 
