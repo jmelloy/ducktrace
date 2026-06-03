@@ -252,6 +252,42 @@ def claude_cost(
     )
 
 
+def _normalize_bedrock(model: str) -> str:
+    """Strip Bedrock region/inference-profile prefixes and version suffixes so a
+    Bedrock model id like ``us.anthropic.claude-sonnet-4-20250514-v1:0`` or
+    ``anthropic.claude-opus-4-8`` maps onto the canonical Anthropic name."""
+    m = (model or "").strip()
+    # leading cross-region inference profile (us. / eu. / apac. …)
+    m = re.sub(r"^[a-z]{2,4}\.", "", m, flags=re.I)
+    # provider namespace (anthropic. / meta. / qwen. …)
+    if "." in m:
+        m = m.split(".", 1)[1]
+    # trailing bedrock version (-v1:0)
+    m = re.sub(r"-v\d+:\d+$", "", m)
+    return m
+
+
+def pi_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int,
+    cache_read_tokens: int,
+) -> float:
+    """Best-effort cost for a pi assistant turn from token counts, trying the
+    Claude table first (most pi traffic is Anthropic, incl. via Bedrock), then
+    the Codex/OpenAI table. Returns 0.0 when the model isn't priced (e.g. a
+    local Ollama model)."""
+    for cand in (model, _normalize_bedrock(model)):
+        if claude_pricing(cand) is not None:
+            return claude_cost(cand, input_tokens, output_tokens,
+                               cache_creation_tokens, cache_read_tokens)
+    for cand in (model, _normalize_bedrock(model)):
+        if codex_pricing(cand) is not None:
+            return codex_cost(cand, input_tokens, cache_read_tokens, output_tokens)
+    return 0.0
+
+
 def codex_cost(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
     """Cost for a Codex turn given per-turn token deltas.
 

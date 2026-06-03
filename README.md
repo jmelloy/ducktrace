@@ -1,8 +1,8 @@
 # ducktrace
 
-Parses **Claude Code** and **Codex CLI** session logs into a single DuckDB
-store with two tables — `sessions` and `events` — for usage, cost, repository,
-and file-edit analysis.
+Parses **Claude Code**, **Codex CLI**, and **pi** session logs into a single
+DuckDB store with two tables — `sessions` and `events` — for usage, cost,
+repository, and file-edit analysis.
 
 Structure and cost logic are adapted from the `../ai-observer` Go importer
 (`internal/importer/{claude,codex}.go`, `internal/pricing`, `cmd/debug_repos`),
@@ -13,7 +13,8 @@ reworked into a small Python package.
 - **First-class ids.** Every event has a stable `event_id`
   (Claude's per-line `uuid`, suffixed `#<block>` when a line expands into
   multiple content blocks; `<session>:L<lineno>` for Codex and for Claude
-  lines without a uuid). Every event and session carries `session_id`.
+  lines without a uuid; `pi:<session>:<id>` (suffixed `#<block>`) for pi).
+  Every event and session carries `session_id`.
 - **Extract the useful scalars; `attributes` holds only the remainder.** Ids,
   types, timestamps, model, repository, file path/ext, line counts and
   token/cost are pulled into typed columns. Fields promoted to a column (and the
@@ -63,14 +64,19 @@ reworked into a small Python package.
   roll up into session `pr_repositories` / `pr_numbers`, and serve as a
   last-resort repo signal — which is the *only* PR signal for Codex, since it
   writes no pr-link records.
-- **File metrics.** Edit/Write/MultiEdit/NotebookEdit (Claude) and `apply_patch`
-  (Codex) populate `file_path`, `file_ext`, `lines_added`, `lines_removed`.
-  Line counts live only on the tool **call** event (not its result) to avoid
-  double counting; multi-file Codex patches expand to one event per file.
+- **File metrics.** Edit/Write/MultiEdit/NotebookEdit (Claude), `apply_patch`
+  (Codex), and `edit`/`write` (pi) populate `file_path`, `file_ext`,
+  `lines_added`, `lines_removed`. Line counts live only on the tool **call**
+  event (not its result) to avoid double counting; multi-file Codex patches
+  expand to one event per file.
 - **Cost.** Claude uses `costUSD` when present, else prices tokens. Codex diffs
-  its cumulative `token_count` events into per-turn deltas and prices those.
-  Token columns live on a single carrier event per turn, so session totals are
-  simple `SUM`s with no double counting.
+  its cumulative `token_count` events into per-turn deltas and prices those. pi
+  records both per-turn token usage *and* dollar cost on each assistant turn —
+  `stated_cost` is taken from the log's `usage.cost.total`, and `inferred_cost`
+  re-prices the tokens as a cross-check (Bedrock model ids are normalized onto
+  their canonical Anthropic/OpenAI names; unpriced local Ollama models fall back
+  to the stated cost). Token columns live on a single carrier event per turn, so
+  session totals are simple `SUM`s with no double counting.
 
 ## Setup
 
@@ -84,7 +90,7 @@ python3 -m venv .venv
 ```bash
 .venv/bin/python build_db.py --db data/sessions.duckdb --reset
 # options:
-#   --source claude|codex|all   --limit N   --quiet   --no-canonicalize
+#   --source claude|codex|pi|all   --limit N   --quiet   --no-canonicalize
 #   --max-text N   --max-field N   --keep-full-text        (free-text controls)
 #   --keep-used-attributes   (don't pop promoted fields out of attributes)
 ```
@@ -93,8 +99,9 @@ A full build of ~700 session files (~87k events) takes a few seconds.
 
 Re-runs are idempotent (`INSERT OR REPLACE` on the primary keys). Source
 locations are auto-discovered (`~/.claude/projects`, `~/.config/claude/projects`,
-`~/.codex/sessions`) and overridable via `CLAUDE_ANALYSIS_CLAUDE_PATH` /
-`CLAUDE_ANALYSIS_CODEX_PATH` (comma-separated).
+`~/.codex/sessions`, `~/.pi/agent/sessions`) and overridable via
+`CLAUDE_ANALYSIS_CLAUDE_PATH` / `CLAUDE_ANALYSIS_CODEX_PATH` /
+`CLAUDE_ANALYSIS_PI_PATH` (comma-separated).
 
 ## Tables
 
