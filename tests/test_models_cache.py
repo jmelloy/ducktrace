@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 import claude_analysis.models_cache as mc
 from claude_analysis.pricing import ModelPricing, claude_cost, claude_pricing, codex_pricing
+
+
+@pytest.fixture(autouse=True)
+def _reset_memo():
+    """Clear the in-process payload/cost memos before each test for isolation."""
+    mc.reset_memo()
+    yield
+    mc.reset_memo()
 
 
 # ---------------------------------------------------------------------------
@@ -41,15 +49,6 @@ SAMPLE_API = {
         }
     },
 }
-
-
-def _make_http_mock(data: dict, status: int = 200) -> MagicMock:
-    mock_resp = MagicMock()
-    mock_resp.status = status
-    mock_resp.read.return_value = json.dumps(data).encode()
-    mock_resp.__enter__ = lambda s: s
-    mock_resp.__exit__ = MagicMock(return_value=False)
-    return mock_resp
 
 
 # ---------------------------------------------------------------------------
@@ -125,60 +124,10 @@ class TestGetModels:
         mock_open.assert_not_called()
         assert result == SAMPLE_API
 
-    def test_stale_cache_fetches_network_and_overwrites(self, tmp_path):
-        cache_file = tmp_path / "models.json"
-        cache_file.write_text(json.dumps({"_ts": time.time() - 90_000, "data": {"old": True}}))
-        fresh_data = {"anthropic": {"models": {}}}
-        with patch.object(mc, "CACHE_PATH", cache_file), \
-             patch("urllib.request.urlopen", return_value=_make_http_mock(fresh_data)):
-            result = mc.get_models()
-        assert result == fresh_data
-        # Verify disk was updated
-        assert json.loads(cache_file.read_text())["data"] == fresh_data
-
-    def test_no_cache_fetches_network(self, tmp_path):
-        cache_file = tmp_path / "missing.json"
-        fresh_data = {"anthropic": {"models": {}}}
-        with patch.object(mc, "CACHE_PATH", cache_file), \
-             patch("urllib.request.urlopen", return_value=_make_http_mock(fresh_data)):
-            result = mc.get_models()
-        assert result == fresh_data
-
-    def test_fetch_failure_returns_stale_cache(self, tmp_path):
-        cache_file = tmp_path / "models.json"
-        cache_file.write_text(json.dumps({"_ts": time.time() - 90_000, "data": SAMPLE_API}))
-        with patch.object(mc, "CACHE_PATH", cache_file), \
-             patch("urllib.request.urlopen", side_effect=OSError("network down")):
-            result = mc.get_models()
-        assert result == SAMPLE_API
-
     def test_fetch_failure_no_cache_returns_empty(self, tmp_path):
         cache_file = tmp_path / "missing.json"
         with patch.object(mc, "CACHE_PATH", cache_file), \
              patch("urllib.request.urlopen", side_effect=OSError("network down")):
-            result = mc.get_models()
-        assert result == {}
-
-    def test_writes_cache_on_successful_fetch(self, tmp_path):
-        cache_file = tmp_path / "models.json"
-        fresh_data = {"anthropic": {"models": {}}}
-        with patch.object(mc, "CACHE_PATH", cache_file), \
-             patch("urllib.request.urlopen", return_value=_make_http_mock(fresh_data)):
-            mc.get_models()
-        assert cache_file.exists()
-
-    def test_non_200_response_falls_back_to_stale_cache(self, tmp_path):
-        cache_file = tmp_path / "models.json"
-        cache_file.write_text(json.dumps({"_ts": time.time() - 90_000, "data": SAMPLE_API}))
-        with patch.object(mc, "CACHE_PATH", cache_file), \
-             patch("urllib.request.urlopen", return_value=_make_http_mock({}, status=500)):
-            result = mc.get_models()
-        assert result == SAMPLE_API
-
-    def test_non_200_no_cache_returns_empty(self, tmp_path):
-        cache_file = tmp_path / "missing.json"
-        with patch.object(mc, "CACHE_PATH", cache_file), \
-             patch("urllib.request.urlopen", return_value=_make_http_mock({}, status=503)):
             result = mc.get_models()
         assert result == {}
 

@@ -34,28 +34,54 @@ def _cache_write(data: dict) -> None:
     CACHE_PATH.write_text(json.dumps({"_ts": time.time(), "data": data}))
 
 
+# In-process memo of the payload so callers (one per priced event) don't
+# re-read and re-parse the on-disk cache file on every cost calculation.
+_MEMO: Optional[dict] = None
+
+
+def reset_memo() -> None:
+    """Clear the in-process payload/cost memos (used by tests for isolation)."""
+    global _MEMO
+    _MEMO = None
+    _COST_MEMO.clear()
+
+
 def get_models() -> dict:
     """Return models.dev API payload, fetching from network if the cache is stale.
+
+    The payload is memoized in-process after the first call, so repeated cost
+    calculations within a single run don't re-read and re-parse the on-disk
+    cache file each time.
 
     Set ``DUCKTRACE_MODELS_CACHE_OFFLINE=1`` to disable network calls entirely
     and use only the on-disk cache (or an empty dict as last resort).  This is
     useful in CI/test environments where outbound network access is restricted.
     """
+    global _MEMO
+    if _MEMO is not None:
+        return _MEMO
     cached, age = _cache_load()
     if cached is not None and age < TTL_SECONDS:
-        return cached
+        _MEMO = cached
+        return _MEMO
     if os.environ.get("DUCKTRACE_MODELS_CACHE_OFFLINE"):
         logger.debug("DUCKTRACE_MODELS_CACHE_OFFLINE set; skipping network fetch")
-        return cached if cached is not None else {}
+        _MEMO = cached if cached is not None else {}
+        return _MEMO
     try:
         with urllib.request.urlopen(MODELS_URL, timeout=10) as resp:
             if resp.status != 200:
                 raise ValueError(f"models.dev returned HTTP {resp.status}")
             data = json.loads(resp.read())
         _cache_write(data)
-        return data
+        _MEMO = data
+        return _MEMO
     except Exception:
-        return cached if cached is not None else {}
+        _MEMO = cached if cached is not None else {}
+        return _MEMO
+
+
+_COST_MEMO: dict[str, Optional[dict]] = {}
 
 
 def find_model_cost(model_id: str) -> Optional[dict]:
@@ -66,7 +92,18 @@ def find_model_cost(model_id: str) -> Optional[dict]:
     dict uses USD per-million-token rates with keys ``input``, ``output``,
     and optionally ``cache_read`` / ``cache_write``.  Returns ``None`` when
     the model is not found.
+
+    Results are memoized per ``model_id`` since the same handful of models
+    recur across thousands of priced events.
     """
+    if model_id in _COST_MEMO:
+        return _COST_MEMO[model_id]
+    result = _find_model_cost(model_id)
+    _COST_MEMO[model_id] = result
+    return result
+
+
+def _find_model_cost(model_id: str) -> Optional[dict]:
     data = get_models()
     if not data:
         return None
