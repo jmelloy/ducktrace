@@ -7,20 +7,21 @@ import sys
 # Pricing per million tokens (USD)
 PRICING = {
     "claude-sonnet-4-6": {
-        "input":          3.00,
+        "input": 3.00,
         "cache_write_5m": 1.00,
         "cache_write_1h": 3.75,
-        "cache_read":     0.30,
-        "output":        15.00,
+        "cache_read": 0.30,
+        "output": 15.00,
     },
     "claude-haiku-4-5": {
-        "input":          0.80,
+        "input": 0.80,
         "cache_write_5m": 0.08,
         "cache_write_1h": 1.00,
-        "cache_read":     0.08,
-        "output":         4.00,
+        "cache_read": 0.08,
+        "output": 4.00,
     },
 }
+
 
 def calculate_cost(path: str) -> None:
     totals: dict[str, dict] = {}
@@ -52,9 +53,9 @@ def calculate_cost(path: str) -> None:
                 }
 
             t = totals[model]
-            t["input"]          += u.get("input_tokens", 0)
-            t["cache_read"]     += u.get("cache_read_input_tokens", 0)
-            t["output"]         += u.get("output_tokens", 0)
+            t["input"] += u.get("input_tokens", 0)
+            t["cache_read"] += u.get("cache_read_input_tokens", 0)
+            t["output"] += u.get("output_tokens", 0)
             t["cache_write_5m"] += cc.get("ephemeral_5m_input_tokens", 0)
             t["cache_write_1h"] += cc.get("ephemeral_1h_input_tokens", 0)
 
@@ -72,13 +73,14 @@ def calculate_cost(path: str) -> None:
 
         print(f"\n{model}")
         print(f"  {'tokens':30s}  {'cost':>10s}")
-        print(f"  {'-'*42}")
+        print(f"  {'-' * 42}")
         for k in p:
             print(f"  {k:30s}  ${costs[k]:>9.4f}  ({t[k]:,} tokens)")
         print(f"  {'TOTAL':30s}  ${model_total:>9.4f}")
 
-    print(f"\n{'='*44}")
+    print(f"\n{'=' * 44}")
     print(f"  {'GRAND TOTAL':30s}  ${grand_total:>9.4f}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

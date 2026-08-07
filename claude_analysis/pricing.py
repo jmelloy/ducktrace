@@ -27,10 +27,10 @@ _DATE_SUFFIX_RE = re.compile(r"-\d{8}$")
 
 @dataclass(frozen=True)
 class ModelPricing:
-    input: float          # per token
-    output: float         # per token
-    cache_read: float     # per token
-    cache_write: float    # per token (Claude only; 0 for Codex)
+    input: float  # per token
+    output: float  # per token
+    cache_read: float  # per token
+    cache_write: float  # per token (Claude only; 0 for Codex)
 
 
 def _mk(input_m, output_m, cache_read_m=0.0, cache_write_m=0.0) -> ModelPricing:
@@ -102,7 +102,7 @@ _CODEX: dict[str, ModelPricing] = {
     "gpt-5.1": _mk(1.25, 10, 0.125),
     "gpt-5.2": _mk(1.75, 14, 0.175),
     "gpt-5.4": _mk(2.5, 15, 0.25),
-    "gpt-5.5": _mk(5, 30, 0.5),          # per developers.openai.com/api/docs/pricing
+    "gpt-5.5": _mk(5, 30, 0.5),  # per developers.openai.com/api/docs/pricing
     "gpt-5.5-codex": _mk(5, 30, 0.5),
     "gpt-5.4-mini": _mk(0.75, 4.5, 0.075),
     "gpt-5.4-nano": _mk(0.2, 1.25, 0.02),
@@ -205,11 +205,16 @@ def claude_pricing(model: str) -> ModelPricing | None:
     """
     model = (model or "").strip()
     if model.startswith("anthropic/"):
-        model = model[len("anthropic/"):]
+        model = model[len("anthropic/") :]
     api = _api_pricing(model)
     hardcoded = _lookup(_CLAUDE, _CLAUDE_ALIASES, model)
     if api is not None:
-        logger.debug("claude_pricing(%s): using models.dev API rates (input=%s, output=%s)", model, api.input, api.output)
+        logger.debug(
+            "claude_pricing(%s): using models.dev API rates (input=%s, output=%s)",
+            model,
+            api.input,
+            api.output,
+        )
         return _merge_cache_rates(api, hardcoded)
     return hardcoded
 
@@ -224,11 +229,16 @@ def codex_pricing(model: str) -> ModelPricing | None:
     """
     model = (model or "").strip()
     if model.startswith("openai/"):
-        model = model[len("openai/"):]
+        model = model[len("openai/") :]
     api = _api_pricing(model)
     hardcoded = _lookup(_CODEX, _CODEX_ALIASES, model)
     if api is not None:
-        logger.debug("codex_pricing(%s): using models.dev API rates (input=%s, output=%s)", model, api.input, api.output)
+        logger.debug(
+            "codex_pricing(%s): using models.dev API rates (input=%s, output=%s)",
+            model,
+            api.input,
+            api.output,
+        )
         return _merge_cache_rates(api, hardcoded)
     return hardcoded
 
@@ -280,8 +290,9 @@ def pi_cost(
     local Ollama model)."""
     for cand in (model, _normalize_bedrock(model)):
         if claude_pricing(cand) is not None:
-            return claude_cost(cand, input_tokens, output_tokens,
-                               cache_creation_tokens, cache_read_tokens)
+            return claude_cost(
+                cand, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+            )
     for cand in (model, _normalize_bedrock(model)):
         if codex_pricing(cand) is not None:
             return codex_cost(cand, input_tokens, cache_read_tokens, output_tokens)

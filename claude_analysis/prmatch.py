@@ -25,14 +25,18 @@ _PULL_URL_RE = re.compile(r"https?://github\.com/([^/\s]+/[^/\s]+?)/pull/(\d+)",
 # Any GitHub repo reference: https URL, ssh remote (git@github.com:o/r), or a
 # bare github.com/o/r — covers `git remote`, `git clone`, `gh repo view`, etc.
 # The trailing lookahead stops before path/punctuation so we capture just owner/repo.
-_REPO_URL_RE = re.compile(
-    r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?(?=[/\s)\"'`,]|$)", re.I)
+_REPO_URL_RE = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?(?=[/\s)\"'`,]|$)", re.I)
 
 
 # Documentation/example placeholders that are not real repositories.
 _PLACEHOLDER_REPOS = {
-    "owner/repo", "owner/name", "org/repo", "user/repo", "your-org/your-repo",
-    "username/repo", "owner/repository",
+    "owner/repo",
+    "owner/name",
+    "org/repo",
+    "user/repo",
+    "your-org/your-repo",
+    "username/repo",
+    "owner/repository",
 }
 
 

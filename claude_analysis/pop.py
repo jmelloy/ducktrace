@@ -16,8 +16,16 @@ keep the fuller JSON.
 from __future__ import annotations
 
 # Claude — keys removed at each level of the {line, message, block} attributes.
-_CLAUDE_LINE = {"type", "timestamp", "sessionId", "uuid", "parentUuid",
-                "requestId", "cwd", "gitBranch"}
+_CLAUDE_LINE = {
+    "type",
+    "timestamp",
+    "sessionId",
+    "uuid",
+    "parentUuid",
+    "requestId",
+    "cwd",
+    "gitBranch",
+}
 _CLAUDE_MSG = {"id", "model"}  # usage kept: tokens are inferred, not lifted from usage
 _CLAUDE_BLOCK_STRUCT = {"type", "id", "tool_use_id", "name"}
 _CLAUDE_BLOCK_TEXT = {"text", "thinking", "content"}  # now in the `text` column
@@ -61,7 +69,7 @@ def pop_used_event(ev: dict) -> dict:
                 _pop_keys(block, _CLAUDE_BLOCK_TEXT)
             # drop now-empty containers for tidiness
             for k in ("line", "message", "block"):
-                if a.get(k) == {} :
+                if a.get(k) == {}:
                     a.pop(k, None)
         else:
             # raw non-message entry (pr-link, system, snapshot, …)

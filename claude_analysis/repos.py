@@ -46,11 +46,11 @@ def normalize_git_url(url: str) -> str:
     if not url:
         return ""
     u = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url.strip(), flags=re.I)  # scheme
-    u = re.sub(r"^[^@/]+@", "", u)                                     # user/token@
-    u = u.replace(":", "/", 1)                                        # ssh host:path
+    u = re.sub(r"^[^@/]+@", "", u)  # user/token@
+    u = u.replace(":", "/", 1)  # ssh host:path
     u = re.sub(r"\.git$", "", u)
     parts = [p for p in u.split("/") if p]
-    if len(parts) >= 3:          # host / owner / repo …
+    if len(parts) >= 3:  # host / owner / repo …
         return "/".join(parts[-2:])
     return u
 
@@ -67,7 +67,7 @@ def resolve_repo_name(cwd: str) -> str:
         if git_path.is_file():
             content = git_path.read_text(errors="replace").strip()
             if content.startswith("gitdir:"):
-                gitdir = Path(content[len("gitdir:"):].strip())
+                gitdir = Path(content[len("gitdir:") :].strip())
                 parts = gitdir.parts
                 try:
                     idx = next(i for i, seg in enumerate(parts) if seg == ".git")
@@ -94,7 +94,9 @@ def cwd_git_remote(path: str) -> str:
     try:
         out = subprocess.run(
             ["git", "-C", path, "config", "--get", "remote.origin.url"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return ""

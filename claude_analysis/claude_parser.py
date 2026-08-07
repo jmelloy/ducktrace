@@ -37,6 +37,7 @@ def _get_tokenizer():
         return _tok
     try:
         from tokenizers import Tokenizer
+
         _tok = Tokenizer.from_pretrained("Xenova/claude-tokenizer")
     except Exception:
         _tok_unavailable = True
@@ -52,6 +53,7 @@ def _tok_count(text: str) -> int:
         return len(tok.encode(text).ids)
     except Exception:
         return 0
+
 
 def _estimate_thinking_tokens(content) -> int:
     """Estimate visible-thinking tokens from `thinking` blocks.
@@ -77,6 +79,7 @@ def _estimate_thinking_tokens(content) -> int:
         if block.get("type") == "thinking":
             total += _tok_count(block.get("thinking") or "")
     return total
+
 
 def _count_input_tokens(content) -> int | None:
     """Return token count for user message content, or None if tokenizer unavailable.
@@ -225,9 +228,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         if sid:
             session_id = sid
         if t == "ai-title" and e.get("aiTitle"):
-            ai_title = e["aiTitle"]            # last (most recent) wins
+            ai_title = e["aiTitle"]  # last (most recent) wins
         elif t == "custom-title" and e.get("customTitle"):
-            custom_title = e["customTitle"]    # manual rename; overrides ai-title
+            custom_title = e["customTitle"]  # manual rename; overrides ai-title
         if t == "worktree-state":
             ws = e.get("worktreeSession") or {}
             if ws.get("originalCwd"):
@@ -279,11 +282,15 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             "subtype": None,
             "role": None,
             "parent_id": e.get("parentUuid"),
-            "message_id": (e.get("message") or {}).get("id") if isinstance(e.get("message"), dict) else e.get("messageId"),
+            "message_id": (e.get("message") or {}).get("id")
+            if isinstance(e.get("message"), dict)
+            else e.get("messageId"),
             "request_id": e.get("requestId"),
             "tool_use_id": None,
             "tool_name": None,
-            "model": (e.get("message") or {}).get("model") if isinstance(e.get("message"), dict) else None,
+            "model": (e.get("message") or {}).get("model")
+            if isinstance(e.get("message"), dict)
+            else None,
             "cwd": e.get("cwd"),
             "git_branch": e.get("gitBranch"),
             "repository": None,  # resolved + stamped after mining (see below)
@@ -349,7 +356,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             elif t in ("last-prompt",):
                 ev["text"] = e.get("lastPrompt")
             ev["reasoning_tokens"] = _estimate_thinking_tokens([content]) if content else None
-            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  
+            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], []) + [ev]
             events.append(ev)
             continue
 
@@ -362,13 +369,19 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["attributes"] = {"line": line_meta, "message": msg_meta, "block": content}
             ev["calculated_input_tokens"] = _count_input_tokens(content)
             parent_list = event_parent_map.get(ev["parent_id"], [])
-            while len(parent_list) == 1 and parent_list[0].get("calculated_input_tokens") is None and parent_list[0]["parent_id"] is not None:
+            while (
+                len(parent_list) == 1
+                and parent_list[0].get("calculated_input_tokens") is None
+                and parent_list[0]["parent_id"] is not None
+            ):
                 parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
 
             _attach_usage(ev, e, msg, main_model, parent=parent_list)
             mine(ev)
             events.append(ev)
-            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  # track all events for this message for later token rolling
+            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], []) + [
+                ev
+            ]  # track all events for this message for later token rolling
             continue
 
         # message line with a list of content blocks
@@ -379,11 +392,17 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             ev["calculated_input_tokens"] = _count_input_tokens(content)
             ev["reasoning_tokens"] = _estimate_thinking_tokens(content)
             parent_list = event_parent_map.get(ev["parent_id"], [])
-            while len(parent_list) == 1 and parent_list[0].get("calculated_input_tokens") is None and parent_list[0]["parent_id"] is not None:
+            while (
+                len(parent_list) == 1
+                and parent_list[0].get("calculated_input_tokens") is None
+                and parent_list[0]["parent_id"] is not None
+            ):
                 parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
             _attach_usage(ev, e, msg, main_model, parent=parent_list)
             events.append(ev)
-            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], [])  + [ev]  # track all events for this message for later token rolling
+            event_parent_map[ev["event_id"]] = event_parent_map.get(ev["event_id"], []) + [
+                ev
+            ]  # track all events for this message for later token rolling
             continue
 
         tool_use_result = e.get("toolUseResult")
@@ -397,7 +416,7 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = t
                 ev["text"] = block.get("thinking", "")
                 ev["reasoning_tokens"] = _estimate_thinking_tokens([block])
-                
+
             elif btype == "text":
                 ev["role"] = t
                 ev["text"] = block.get("text", "")
@@ -424,14 +443,15 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = "tool_result"
                 ev["tool_use_id"] = block.get("tool_use_id")
                 ev["text"] = _content_text(block.get("content"))
-                
+
                 ev["calculated_input_tokens"] = _count_input_tokens(block.get("content"))
 
                 # Attribute the result to a file when the structured result names one,
                 # but leave line counts on the tool_use event to avoid double counting.
                 if isinstance(tool_use_result, dict):
                     fpath = tool_use_result.get("filePath") or (
-                        tool_use_result.get("file", {}) or {}).get("filePath")
+                        tool_use_result.get("file", {}) or {}
+                    ).get("filePath")
                     if fpath:
                         ev["file_path"] = fpath
                         ev["file_ext"] = file_ext(fpath)
@@ -439,18 +459,26 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
             else:
                 ev["role"] = btype
                 ev["text"] = block.get("text") if isinstance(block, dict) else None
-            event_parent_map[ev["event_id"].split("#")[0]] = event_parent_map.get(ev["event_id"].split("#")[0], [])  + [ev]  # track all events for this message for later token rolling
+            event_parent_map[ev["event_id"].split("#")[0]] = event_parent_map.get(
+                ev["event_id"].split("#")[0], []
+            ) + [ev]  # track all events for this message for later token rolling
             parent_list = event_parent_map.get(ev["parent_id"], [])
-            while len(parent_list) == 1 and parent_list[0].get("calculated_input_tokens") is None and parent_list[0]["parent_id"] is not None:
+            while (
+                len(parent_list) == 1
+                and parent_list[0].get("calculated_input_tokens") is None
+                and parent_list[0]["parent_id"] is not None
+            ):
                 parent_list = event_parent_map.get(parent_list[0]["parent_id"], [])
-            _attach_usage(ev, e, msg, main_model, parent=parent_list) 
+            _attach_usage(ev, e, msg, main_model, parent=parent_list)
             events.append(ev)
 
     # Resolve the repository now that we've mined owner/repo references from the
     # session's own commands/output (referenced_repository), and combine them
     # with the structured pr-link repos, most-frequent first. The cwd decides
     # which of these is real (see resolve_session_repository).
-    ref_counts = Counter(ev["referenced_repository"] for ev in events if ev.get("referenced_repository"))
+    ref_counts = Counter(
+        ev["referenced_repository"] for ev in events if ev.get("referenced_repository")
+    )
     for r in pr_repositories:
         ref_counts[r] += 1
     candidates = [r for r, _ in ref_counts.most_common()]
@@ -464,7 +492,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
 
     for ev in events:
         if ev["message_id"] and ev["request_id"]:
-            event_usage[ev["message_id"], ev["request_id"]] = event_usage.get((ev["message_id"], ev["request_id"]), []) + [ev]
+            event_usage[ev["message_id"], ev["request_id"]] = event_usage.get(
+                (ev["message_id"], ev["request_id"]), []
+            ) + [ev]
         ev["repository"] = repository
 
     for (message_id, request_id), ev_list in event_usage.items():
@@ -478,7 +508,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         )
         # calculated_input_tokens: each block may have contributed different amounts;
         # sum them up (parent-rolled tokens land on the first assistant block)
-        calculated_input_tokens = sum(ev.get("calculated_input_tokens") or 0 for ev in ev_list) or None
+        calculated_input_tokens = (
+            sum(ev.get("calculated_input_tokens") or 0 for ev in ev_list) or None
+        )
 
         final = ev_list[-1]
         for i, ev in enumerate(ev_list):
@@ -491,7 +523,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["reasoning_tokens"] = None
                 ev["stated_cost"] = None
                 ev["inferred_cost"] = None
-                if isinstance(ev.get("attributes"), dict) and isinstance(ev["attributes"].get("message"), dict):
+                if isinstance(ev.get("attributes"), dict) and isinstance(
+                    ev["attributes"].get("message"), dict
+                ):
                     ev["attributes"]["message"].pop("usage", None)
             else:
                 ev["input_tokens"] = raw_input_tokens
@@ -533,7 +567,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
     return meta, events
 
 
-def _attach_usage(ev: dict, e: dict, msg: dict | None, fallback_model: str, parent: list[dict | None]) -> None:
+def _attach_usage(
+    ev: dict, e: dict, msg: dict | None, fallback_model: str, parent: list[dict | None]
+) -> None:
     """Attach token + cost columns from an assistant message's usage block."""
     if e.get("type") != "assistant" or not msg:
         return
