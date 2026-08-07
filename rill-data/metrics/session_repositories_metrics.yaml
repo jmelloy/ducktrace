@@ -1,0 +1,78 @@
+# Metrics view YAML
+# Reference documentation: https://docs.rilldata.com/reference/project-files/metrics-views
+# This file was generated using AI.
+
+version: 1
+type: metrics_view
+
+display_name: Session Repositories Metrics
+connector: duckdb
+model: session_repositories_model
+
+timeseries: started_at
+
+dimensions:
+  - name: started_at
+    display_name: Started At
+    column: started_at
+  - name: session_id
+    display_name: Session Id
+    column: session_id
+  - name: repository
+    display_name: Repository
+    column: repository
+  - name: is_primary
+    display_name: Is Primary
+    column: is_primary
+  - name: pr_number
+    display_name: PR Number
+    column: pr_number
+
+measures:
+  - name: repository_records_measure
+    display_name: Repository records
+    expression: COUNT(*)
+    description: Total number of rows in session_repositories.
+    format_preset: humanize
+  - name: unique_sessions_measure
+    display_name: Unique sessions
+    expression: COUNT(DISTINCT session_id)
+    description: Number of distinct sessions represented in the table.
+    format_preset: humanize
+  - name: primary_repository_records_measure
+    display_name: Primary repository records
+    expression: SUM(CASE WHEN is_primary THEN 1 ELSE 0 END)
+    description: Count of rows marked as the primary repository.
+    format_preset: humanize
+  - name: total_files_touched_measure
+    display_name: Total files touched
+    expression: SUM(files_touched)
+    description: Total number of files touched across all session-repository rows.
+    format_preset: humanize
+  - name: total_lines_added_measure
+    display_name: Total lines added
+    expression: SUM(lines_added)
+    description: Total lines added across all session-repository rows.
+    format_preset: humanize
+  - name: total_lines_removed_measure
+    display_name: Total lines removed
+    expression: SUM(lines_removed)
+    description: Total lines removed across all session-repository rows.
+    format_preset: humanize
+  - name: average_lines_share_measure
+    display_name: Average lines share
+    expression: AVG(lines_share)
+    description: Average share of lines attributed to the repository within a session.
+    format_preset: humanize
+  - name: total_stated_cost_measure
+    display_name: Total stated cost
+    expression: SUM(stated_cost)
+    description: Sum of stated cost across all session-repository rows.
+    format_preset: humanize
+  - name: total_inferred_cost_measure
+    display_name: Total inferred cost
+    expression: SUM(inferred_cost)
+    description: Sum of inferred cost across all session-repository rows.
+    format_preset: humanize
+database: sessions
+database_schema: main

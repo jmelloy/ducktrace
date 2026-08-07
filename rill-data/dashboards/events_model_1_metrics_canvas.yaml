@@ -1,0 +1,151 @@
+type: canvas
+version: 1
+display_name: "Events Overview"
+
+defaults:
+  time_range: P30D
+  comparison_mode: time
+
+time_ranges:
+  - P7D
+  - P30D
+  - P90D
+  - inf
+
+rows:
+  - height: 96px
+    items:
+      - width: 12
+        markdown:
+          content: |
+            # Events Overview
+
+            High-level operational metrics for events, sessions, requests, token usage, and inferred cost.
+
+  - height: 200px
+    items:
+      - width: 12
+        kpi_grid:
+          metrics_view: events_model_1_metrics
+          measures:
+            - total_events_measure
+            - unique_sessions_measure
+            - unique_requests_measure
+            - total_inferred_cost_measure
+          comparison:
+            - percent_change
+            - previous
+          sparkline: right
+
+  - height: 380px
+    items:
+      - width: 6
+        line_chart:
+          metrics_view: events_model_1_metrics
+          title: "Total Events over Time"
+          color: primary
+          x:
+            field: timestamp
+            type: temporal
+          y:
+            field: total_events_measure
+            type: quantitative
+            zeroBasedOrigin: true
+      - width: 6
+        line_chart:
+          metrics_view: events_model_1_metrics
+          title: "Total Inferred Cost over Time"
+          color: secondary
+          x:
+            field: timestamp
+            type: temporal
+          y:
+            field: total_inferred_cost_measure
+            type: quantitative
+            zeroBasedOrigin: true
+
+  - height: 420px
+    items:
+      - width: 12
+        stacked_bar:
+          metrics_view: events_model_1_metrics
+          title: "Token Volume over Time (Input vs Output)"
+          color:
+            field: rill_measures
+            type: value
+            legendOrientation: top
+          x:
+            field: timestamp
+            type: temporal
+            limit: 60
+          y:
+            field: total_input_tokens_measure
+            fields:
+              - total_input_tokens_measure
+              - total_output_tokens_measure
+            type: quantitative
+            zeroBasedOrigin: true
+
+  - height: 380px
+    items:
+      - width: 6
+        bar_chart:
+          metrics_view: events_model_1_metrics
+          title: "Events by Type"
+          x:
+            field: type
+            type: nominal
+            limit: 15
+            sort: -y
+            labelAngle: 0
+          y:
+            field: total_events_measure
+            type: quantitative
+            zeroBasedOrigin: true
+      - width: 6
+        bar_chart:
+          metrics_view: events_model_1_metrics
+          title: "Events by Source"
+          x:
+            field: source
+            type: nominal
+            limit: 15
+            sort: -y
+            labelAngle: 0
+          y:
+            field: total_events_measure
+            type: quantitative
+            zeroBasedOrigin: true
+
+  - height: 420px
+    items:
+      - width: 4
+        leaderboard:
+          metrics_view: events_model_1_metrics
+          title: "Top Repositories by Inferred Cost"
+          dimensions:
+            - repository
+          measures:
+            - total_inferred_cost_measure
+            - total_events_measure
+          num_rows: 15
+      - width: 4
+        leaderboard:
+          metrics_view: events_model_1_metrics
+          title: "Top Tools by Total Events"
+          dimensions:
+            - tool_name
+          measures:
+            - total_events_measure
+            - unique_sessions_measure
+          num_rows: 15
+      - width: 4
+        leaderboard:
+          metrics_view: events_model_1_metrics
+          title: "Top File Extensions by Lines Changed"
+          dimensions:
+            - file_ext
+          measures:
+            - total_lines_changed_measure
+            - total_events_measure
+          num_rows: 15

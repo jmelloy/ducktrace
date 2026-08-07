@@ -1,0 +1,112 @@
+type: canvas
+display_name: "Sessions Cost Overview"
+
+defaults:
+  time_range: 2026-08-01 to 2026-09-01
+  comparison_mode: time
+  filters: {}
+version: 1
+
+time_ranges:
+  - P7D
+  - P30D
+  - P90D
+  - inf
+
+rows:
+  - items:
+      - width: 12
+        markdown:
+          content: >
+            # Sessions Overview
+
+
+            Cost-focused overview of inferred vs stated cost and token usage,
+            with breakdowns by repository (and PR when available).
+    height: 96px
+  - items:
+      - width: 12
+        kpi_grid:
+          metrics_view: sessions_model_metrics
+          measures:
+            - total_inferred_cost_measure
+            - total_stated_cost_measure
+            - total_tokens
+            - average_total_tokens_measure
+            - session_count_measure
+          comparison:
+            - percent_change
+            - previous
+          sparkline: right
+    height: 220px
+  - items:
+      - width: 6
+        line_chart:
+          metrics_view: sessions_model_metrics
+          title: Inferred Cost over Time
+          color: primary
+          x:
+            field: started_at
+            type: temporal
+          y:
+            field: total_inferred_cost_measure
+            type: quantitative
+            zeroBasedOrigin: true
+      - width: 6
+        line_chart:
+          metrics_view: sessions_model_metrics
+          title: Stated Cost over Time
+          color: secondary
+          x:
+            field: started_at
+            type: temporal
+          y:
+            field: total_stated_cost_measure
+            type: quantitative
+            zeroBasedOrigin: true
+    height: 380px
+  - items:
+      - width: 6
+        leaderboard:
+          metrics_view: sessions_model_metrics
+          title: Top Repositories by Inferred Cost
+          dimensions:
+            - repository
+          measures:
+            - total_inferred_cost_measure
+            - total_tokens
+            - session_count_measure
+          num_rows: 20
+      - width: 6
+        leaderboard:
+          metrics_view: sessions_model_metrics
+          title: Top Repositories by Stated Cost
+          dimensions:
+            - repository
+          measures:
+            - total_stated_cost_measure
+            - total_tokens
+            - session_count_measure
+          num_rows: 20
+    height: 420px
+  - items:
+      - width: 12
+        markdown:
+          alignment:
+            horizontal: left
+            vertical: middle
+          content: "## PR analysis "
+          description: ""
+          title: ""
+  - items:
+      - pivot:
+          measures:
+            - total_inferred_cost_measure
+            - repository_records_measure
+            - unique_sessions_measure
+          metrics_view: session_repositories_metrics
+          row_dimensions:
+            - repository
+            - pr_number
+        width: 12
+    height: 40px

@@ -5,11 +5,13 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+build/
 
 # Data store (regenerate with build_db.py)
 data/
 *.duckdb
 *.duckdb.wal
+*.ducklake
 
 # Local tooling / secrets
 .claude/settings.local.json
