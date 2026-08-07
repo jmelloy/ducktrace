@@ -69,15 +69,29 @@ def _merge_meta(acc: dict | None, m: dict) -> dict:
     return acc
 
 
+def _stat(f) -> tuple[int, int]:
+    try:
+        st = os.stat(f)
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return -1, -1
+
+
 def _ingest(
     parser_mod, events_by, meta_by, *,
-    limit, quiet, seen_files: dict, force: bool,
-) -> tuple[int, int, list[tuple[str, int, int]]]:
+    limit, quiet, seen_files: dict, file_sessions: dict, force: bool,
+) -> tuple[int, int, list[tuple[str, int, int, str]]]:
     """Parse a source's files into the per-session event/meta maps.
 
-    Returns (n_parsed, n_skipped, new_file_stats) where new_file_stats is a
-    list of (path, mtime_ns, size_bytes) for every file that was actually parsed
-    this run (so the caller can update the cache).
+    A session spans several files (main + ``subagents/`` + resumes). Aggregation
+    reads *all* of a session's events at once, so if only some of its files
+    changed we must still re-parse the unchanged ones — otherwise the session
+    row is rewritten from a partial view, dropping tokens / pr_numbers / repo
+    from the untouched files. ``file_sessions`` (cached file->session_id) lets us
+    pull those siblings back in for any session that had a change.
+
+    Returns (n_parsed, n_skipped, new_file_stats) where new_file_stats is a list
+    of (path, mtime_ns, size_bytes, session_id) for every file parsed this run.
     """
     paths = parser_mod.config_paths()
     files = parser_mod.find_session_files(paths)
@@ -87,47 +101,63 @@ def _ingest(
     if not quiet:
         print(f"[{label}] {len(files)} session file(s) in {paths or '(none found)'}", file=sys.stderr)
 
-    n_parsed = 0
-    n_skipped = 0
-    new_stats: list[tuple[str, int, int]] = []
-
-    for i, f in enumerate(files, 1):
+    # classify: files whose mtime/size changed must parse now; unchanged files
+    # with a known cached session are pull-in candidates. Unchanged files with
+    # no cached session (first run after upgrade) parse so we learn the mapping.
+    stats: dict[str, tuple[int, int]] = {}
+    to_parse: list[str] = []            # definitely parse (changed / unknown)
+    candidates: dict[str, str] = {}     # path -> cached session_id (pull in if touched)
+    for f in files:
         path_str = str(f)
-        if not force:
-            try:
-                st = os.stat(f)
-                mtime_ns, size = st.st_mtime_ns, st.st_size
-            except OSError:
-                mtime_ns, size = -1, -1
-            cached = seen_files.get(path_str)
-            if cached is not None and cached == (mtime_ns, size):
-                n_skipped += 1
-                continue
+        stats[path_str] = _stat(f)
+        cached_sid = file_sessions.get(path_str)
+        if force or seen_files.get(path_str) != stats[path_str] or cached_sid is None:
+            to_parse.append(path_str)
         else:
-            try:
-                st = os.stat(f)
-                mtime_ns, size = st.st_mtime_ns, st.st_size
-            except OSError:
-                mtime_ns, size = -1, -1
+            candidates[path_str] = cached_sid
 
+    by_path = {str(f): f for f in files}
+
+    def _parse(path_str):
         try:
-            result = parser_mod.parse_file(f)
+            return parser_mod.parse_file(by_path[path_str])
         except Exception as exc:  # keep going; report the offender
-            print(f"[{label}] error parsing {f}: {exc}", file=sys.stderr)
-            continue
+            print(f"[{label}] error parsing {path_str}: {exc}", file=sys.stderr)
+            return None
+
+    # pass 1: parse the changed/unknown files to discover which sessions changed
+    parsed: dict[str, tuple] = {}
+    touched: set[str] = set()
+    for path_str in to_parse:
+        result = _parse(path_str)
         if result is None:
             continue
-        meta, evs = result
+        parsed[path_str] = result
+        touched.add(result[0]["session_id"])
+
+    # pass 2: pull in the unchanged sibling files of any touched session
+    for path_str, sid in candidates.items():
+        if sid not in touched:
+            continue
+        result = _parse(path_str)
+        if result is not None:
+            parsed[path_str] = result
+
+    # merge in sorted path order (main file sorts before its subagents/ dir, so
+    # _merge_meta keeps the main file's identity fields)
+    new_stats: list[tuple[str, int, int, str]] = []
+    for path_str in sorted(parsed):
+        meta, evs = parsed[path_str]
         sid = meta["session_id"]
         bucket = events_by[sid]
         for ev in evs:
             bucket[ev["event_id"]] = ev  # dedup by event_id (overlapping resumes)
         meta_by[sid] = _merge_meta(meta_by.get(sid), meta)
-        new_stats.append((path_str, mtime_ns, size))
-        n_parsed += 1
-        if not quiet and i % 200 == 0:
-            print(f"[{label}] {i}/{len(files)} files…", file=sys.stderr)
-    return n_parsed, n_skipped, new_stats
+        mtime_ns, size = stats[path_str]
+        new_stats.append((path_str, mtime_ns, size, sid))
+
+    n_skipped = len(files) - len(parsed)
+    return len(parsed), n_skipped, new_stats
 
 
 def main() -> None:
@@ -165,12 +195,14 @@ def main() -> None:
 
     start = time.time()
     seen_files = store.get_seen_files()
+    file_sessions = store.get_file_sessions()
     events_by: dict[str, dict] = defaultdict(dict)  # session_id -> {event_id: event}
     meta_by: dict[str, dict] = {}                    # session_id -> merged meta
-    all_new_stats: list[tuple[str, int, int]] = []
+    all_new_stats: list[tuple[str, int, int, str]] = []
 
     ingest_kwargs = dict(limit=args.limit, quiet=args.quiet,
-                         seen_files=seen_files, force=args.force)
+                         seen_files=seen_files, file_sessions=file_sessions,
+                         force=args.force)
     if args.source in ("claude", "all"):
         n, skipped, ns = _ingest(claude_parser, events_by, meta_by, **ingest_kwargs)
         all_new_stats.extend(ns)
@@ -215,6 +247,10 @@ def main() -> None:
             print(f"\nCanonicalized {len(mapped)} session(s), {len(pairs)} name(s):", file=sys.stderr)
             for bare, canonical in pairs:
                 print(f"  {bare} -> {canonical}", file=sys.stderr)
+
+    n_repo_rows = store.build_session_repositories()
+    if not args.quiet:
+        print(f"Built session_repositories: {n_repo_rows} (session, repo) rows", file=sys.stderr)
 
     store.close()
     if not args.quiet:

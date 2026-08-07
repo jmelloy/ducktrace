@@ -113,9 +113,12 @@ def _create_file_cache(con) -> None:
         CREATE TABLE IF NOT EXISTS file_cache (
             file_path  VARCHAR PRIMARY KEY,
             mtime_ns   BIGINT,
-            size_bytes BIGINT
+            size_bytes BIGINT,
+            session_id VARCHAR
         )
     """)
+    # migrate older caches that predate the session_id column
+    con.execute("ALTER TABLE file_cache ADD COLUMN IF NOT EXISTS session_id VARCHAR")
 
 
 def _column_arrays(rows: list[dict], columns: dict[str, str]) -> dict[str, list]:
@@ -190,12 +193,20 @@ class Store:
         rows = self.con.execute("SELECT file_path, mtime_ns, size_bytes FROM file_cache").fetchall()
         return {r[0]: (r[1], r[2]) for r in rows}
 
-    def mark_files_seen(self, entries: list[tuple[str, int, int]]) -> None:
-        """Upsert (file_path, mtime_ns, size_bytes) rows into file_cache."""
+    def get_file_sessions(self) -> dict[str, str]:
+        """Return {file_path: session_id} so an incremental build can find the
+        unchanged sibling files of a session that had *some* file change."""
+        rows = self.con.execute(
+            "SELECT file_path, session_id FROM file_cache WHERE session_id IS NOT NULL"
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    def mark_files_seen(self, entries: list[tuple[str, int, int, str]]) -> None:
+        """Upsert (file_path, mtime_ns, size_bytes, session_id) rows."""
         if not entries:
             return
         self.con.executemany(
-            "INSERT OR REPLACE INTO file_cache (file_path, mtime_ns, size_bytes) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO file_cache (file_path, mtime_ns, size_bytes, session_id) VALUES (?, ?, ?, ?)",
             entries,
         )
 
@@ -297,6 +308,74 @@ class Store:
                 self.con.execute("UPDATE events SET repository=? WHERE session_id=?", [target, sid])
                 applied.append((repo, target))
         return applied
+
+    def build_session_repositories(self) -> int:
+        """(Re)build the ``session_repositories`` junction: one row per
+        (session, repository), so a session that works in its own repo and
+        references PRs in others fans out to 1-n rows.
+
+        A file change is attributed to ``referenced_repository`` when the event
+        carries one (a PR/`--repo` reference), else to the session's own repo —
+        which is where the edits actually happened. Cost is apportioned across a
+        session's repos by share of lines touched (added+removed); the shares sum
+        to 1 so ``sum(stated_cost)`` per session is conserved. A session with no
+        lines touched puts all its cost on its primary repo rather than splitting
+        evenly (an even split would be fiction). ``pr_numbers`` collects the PRs
+        seen against each repo in that session.
+
+        ponytail: cwd is *not* used to split — most within-session cwd variety is
+        subdirs/worktrees of the same repo (dnsid/compliance-tests ⊂ dnsid), so
+        splitting on it fragments one repo. The session's canonical repository
+        already resolves that. Pure post-step SQL; no parser changes.
+        """
+        self.flush()
+        self.con.execute("DROP TABLE IF EXISTS session_repositories")
+        self.con.execute("""
+        CREATE TABLE session_repositories AS
+        WITH ev AS (
+          SELECT e.session_id,
+                 coalesce(nullif(e.referenced_repository, ''), s.repository) AS repository,
+                 e.file_path, e.role, e.lines_added, e.lines_removed, e.pr_number
+          FROM events e JOIN sessions s USING(session_id)
+        ),
+        agg AS (
+          SELECT session_id, repository,
+                 count(DISTINCT CASE WHEN role='tool_use' THEN file_path END) AS files_touched,
+                 coalesce(sum(lines_added), 0)   AS lines_added,
+                 coalesce(sum(lines_removed), 0) AS lines_removed,
+                 list(DISTINCT pr_number) FILTER (pr_number IS NOT NULL) AS pr_numbers
+          FROM ev WHERE repository IS NOT NULL AND repository <> '' GROUP BY 1, 2
+        ),
+        combined AS (  -- guarantee the session's own repo always gets a row
+          SELECT * FROM agg
+          UNION ALL
+          SELECT session_id, repository, 0, 0, 0, []::BIGINT[]
+          FROM sessions WHERE repository IS NOT NULL AND repository <> ''
+        ),
+        rolled AS (
+          SELECT session_id, repository,
+                 sum(files_touched) AS files_touched,
+                 sum(lines_added)   AS lines_added,
+                 sum(lines_removed) AS lines_removed,
+                 list_distinct(flatten(list(pr_numbers))) AS pr_numbers
+          FROM combined GROUP BY 1, 2
+        ),
+        tot AS (SELECT session_id, sum(lines_added + lines_removed) AS total_lines FROM rolled GROUP BY 1)
+        SELECT r.session_id, r.repository,
+               (r.repository = s.repository) AS is_primary,
+               r.files_touched, r.lines_added, r.lines_removed, r.pr_numbers,
+               CASE WHEN t.total_lines > 0 THEN (r.lines_added + r.lines_removed) * 1.0 / t.total_lines
+                    WHEN r.repository = s.repository THEN 1.0 ELSE 0.0 END AS lines_share,
+               s.stated_cost   * (CASE WHEN t.total_lines > 0 THEN (r.lines_added + r.lines_removed) * 1.0 / t.total_lines
+                                       WHEN r.repository = s.repository THEN 1.0 ELSE 0.0 END) AS stated_cost,
+               s.inferred_cost * (CASE WHEN t.total_lines > 0 THEN (r.lines_added + r.lines_removed) * 1.0 / t.total_lines
+                                       WHEN r.repository = s.repository THEN 1.0 ELSE 0.0 END) AS inferred_cost
+        FROM rolled r JOIN sessions s USING(session_id) JOIN tot t USING(session_id)
+        """)
+        self.con.execute(
+            "ALTER TABLE session_repositories ADD PRIMARY KEY (session_id, repository)"
+        )
+        return self.con.execute("SELECT count(*) FROM session_repositories").fetchone()[0]
 
     def close(self) -> None:
         self.flush()
