@@ -181,7 +181,10 @@ def _redact_value(value, counts: dict[str, int], redact_keys: bool = False):
     if isinstance(value, dict):
         if redact_keys:
             # redact_keys is the outer parameter, passed through unchanged to every recursive call
-            return {_redact_string(k, counts): _redact_value(v, counts, redact_keys) for k, v in value.items()}
+            return {
+                _redact_string(k, counts): _redact_value(v, counts, redact_keys)
+                for k, v in value.items()
+            }
         return {k: _redact_value(v, counts, redact_keys) for k, v in value.items()}
     if isinstance(value, list):
         return [_redact_value(item, counts, redact_keys) for item in value]
@@ -206,6 +209,7 @@ _DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "tests/fixtures/s
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _process_file(
     src: Path,
     output_dir: Path,
@@ -224,7 +228,10 @@ def _process_file(
     fd, tmp_path = tempfile.mkstemp(dir=output_dir, prefix=".tmp-", suffix=".jsonl")
     _success = False
     try:
-        with src.open(encoding="utf-8", errors="surrogateescape") as fin, os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fout:
+        with (
+            src.open(encoding="utf-8", errors="surrogateescape") as fin,
+            os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fout,
+        ):
             for line in fin:
                 line = line.rstrip("\n")
                 if not line.strip():

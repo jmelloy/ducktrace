@@ -31,9 +31,18 @@ from claude_analysis.db import Store
 
 # session metadata keys passed through to aggregate_session
 _META_KEYS = (
-    "repository", "repository_url", "git_branch", "git_commit", "model",
-    "cli_version", "originator", "model_provider", "cwd",
-    "pr_repositories", "pr_numbers", "extra_attributes",
+    "repository",
+    "repository_url",
+    "git_branch",
+    "git_commit",
+    "model",
+    "cli_version",
+    "originator",
+    "model_provider",
+    "cwd",
+    "pr_repositories",
+    "pr_numbers",
+    "extra_attributes",
 )
 
 
@@ -52,8 +61,16 @@ def _merge_meta(acc: dict | None, m: dict) -> dict:
     keeps identity fields like ``file_path``."""
     if acc is None:
         return dict(m)
-    for k in ("repository_url", "git_branch", "git_commit", "model",
-              "cli_version", "originator", "model_provider", "cwd"):
+    for k in (
+        "repository_url",
+        "git_branch",
+        "git_commit",
+        "model",
+        "cli_version",
+        "originator",
+        "model_provider",
+        "cwd",
+    ):
         if not acc.get(k) and m.get(k):
             acc[k] = m[k]
     acc["repository"] = _better_repo(acc.get("repository", ""), m.get("repository", ""))
@@ -61,7 +78,9 @@ def _merge_meta(acc: dict | None, m: dict) -> dict:
         acc["custom_title"] = m["custom_title"]
     if m.get("ai_title"):
         acc["ai_title"] = m["ai_title"]
-    acc["pr_repositories"] = sorted(set(acc.get("pr_repositories", [])) | set(m.get("pr_repositories", [])))
+    acc["pr_repositories"] = sorted(
+        set(acc.get("pr_repositories", [])) | set(m.get("pr_repositories", []))
+    )
     acc["pr_numbers"] = sorted(set(acc.get("pr_numbers", [])) | set(m.get("pr_numbers", [])))
     ea = dict(acc.get("extra_attributes") or {})
     ea.update(m.get("extra_attributes") or {})
@@ -70,8 +89,14 @@ def _merge_meta(acc: dict | None, m: dict) -> dict:
 
 
 def _ingest(
-    parser_mod, events_by, meta_by, *,
-    limit, quiet, seen_files: dict, force: bool,
+    parser_mod,
+    events_by,
+    meta_by,
+    *,
+    limit,
+    quiet,
+    seen_files: dict,
+    force: bool,
 ) -> tuple[int, int, list[tuple[str, int, int]]]:
     """Parse a source's files into the per-session event/meta maps.
 
@@ -85,7 +110,9 @@ def _ingest(
         files = files[:limit]
     label = parser_mod.SOURCE
     if not quiet:
-        print(f"[{label}] {len(files)} session file(s) in {paths or '(none found)'}", file=sys.stderr)
+        print(
+            f"[{label}] {len(files)} session file(s) in {paths or '(none found)'}", file=sys.stderr
+        )
 
     n_parsed = 0
     n_skipped = 0
@@ -131,23 +158,43 @@ def _ingest(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--db", default="data/sessions.duckdb", help="output DuckDB path")
     ap.add_argument("--source", choices=("claude", "codex", "pi", "all"), default="all")
     ap.add_argument("--reset", action="store_true", help="clear existing rows first")
     ap.add_argument("--limit", type=int, default=0, help="max files per source (0 = all)")
-    ap.add_argument("--no-canonicalize", action="store_true",
-                    help="skip promoting bare repo names to owner/repo")
-    ap.add_argument("--max-text", type=int, default=4000,
-                    help="truncate the events.text column to N chars (0 = unlimited)")
-    ap.add_argument("--max-field", type=int, default=4000,
-                    help="truncate long strings inside attributes JSON to N chars (0 = unlimited)")
-    ap.add_argument("--keep-full-text", action="store_true",
-                    help="store all text verbatim (lossless; no truncation or signature stripping)")
-    ap.add_argument("--keep-used-attributes", action="store_true",
-                    help="keep fields in attributes even when promoted to a column (don't pop)")
-    ap.add_argument("--force", action="store_true",
-                    help="re-parse all files even if mtime/size are unchanged")
+    ap.add_argument(
+        "--no-canonicalize",
+        action="store_true",
+        help="skip promoting bare repo names to owner/repo",
+    )
+    ap.add_argument(
+        "--max-text",
+        type=int,
+        default=4000,
+        help="truncate the events.text column to N chars (0 = unlimited)",
+    )
+    ap.add_argument(
+        "--max-field",
+        type=int,
+        default=4000,
+        help="truncate long strings inside attributes JSON to N chars (0 = unlimited)",
+    )
+    ap.add_argument(
+        "--keep-full-text",
+        action="store_true",
+        help="store all text verbatim (lossless; no truncation or signature stripping)",
+    )
+    ap.add_argument(
+        "--keep-used-attributes",
+        action="store_true",
+        help="keep fields in attributes even when promoted to a column (don't pop)",
+    )
+    ap.add_argument(
+        "--force", action="store_true", help="re-parse all files even if mtime/size are unchanged"
+    )
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -166,11 +213,12 @@ def main() -> None:
     start = time.time()
     seen_files = store.get_seen_files()
     events_by: dict[str, dict] = defaultdict(dict)  # session_id -> {event_id: event}
-    meta_by: dict[str, dict] = {}                    # session_id -> merged meta
+    meta_by: dict[str, dict] = {}  # session_id -> merged meta
     all_new_stats: list[tuple[str, int, int]] = []
 
-    ingest_kwargs = dict(limit=args.limit, quiet=args.quiet,
-                         seen_files=seen_files, force=args.force)
+    ingest_kwargs = dict(
+        limit=args.limit, quiet=args.quiet, seen_files=seen_files, force=args.force
+    )
     if args.source in ("claude", "all"):
         n, skipped, ns = _ingest(claude_parser, events_by, meta_by, **ingest_kwargs)
         all_new_stats.extend(ns)
@@ -199,7 +247,10 @@ def main() -> None:
             ev["repository"] = repository
         title = m.get("custom_title") or m.get("ai_title") or None
         session = aggregate_session(
-            sid, m["file_path"], m["source"], evs,
+            sid,
+            m["file_path"],
+            m["source"],
+            evs,
             title=title,
             **{k: m.get(k) for k in _META_KEYS},
         )
@@ -212,14 +263,16 @@ def main() -> None:
         mapped = store.canonicalize_repositories()
         if mapped and not args.quiet:
             pairs = sorted(set(mapped))
-            print(f"\nCanonicalized {len(mapped)} session(s), {len(pairs)} name(s):", file=sys.stderr)
+            print(
+                f"\nCanonicalized {len(mapped)} session(s), {len(pairs)} name(s):", file=sys.stderr
+            )
             for bare, canonical in pairs:
                 print(f"  {bare} -> {canonical}", file=sys.stderr)
 
     store.close()
     if not args.quiet:
         print(
-            f"\nDone in {time.time()-start:.1f}s → {args.db}\n"
+            f"\nDone in {time.time() - start:.1f}s → {args.db}\n"
             f"  {len(events_by)} sessions, {total_e} events",
             file=sys.stderr,
         )

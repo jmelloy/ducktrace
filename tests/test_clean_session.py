@@ -20,6 +20,7 @@ from clean_session import clean_record, main  # noqa: E402
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _cleaned(s: str) -> str:
     record = {"text": s}
     result, _ = clean_record(record)
@@ -34,6 +35,7 @@ def _counts(s: str) -> dict:
 # ---------------------------------------------------------------------------
 # PII pattern tests
 # ---------------------------------------------------------------------------
+
 
 class TestHomePaths:
     def test_linux_home(self):
@@ -176,6 +178,7 @@ class TestGitAuthorLines:
 # Structure preservation tests
 # ---------------------------------------------------------------------------
 
+
 class TestStructurePreservation:
     def test_dict_keys_preserved(self):
         record = {
@@ -217,6 +220,7 @@ class TestStructurePreservation:
 # JSONL file processing tests (via CLI main())
 # ---------------------------------------------------------------------------
 
+
 class TestCLI:
     def test_line_count_preserved(self, tmp_path):
         src = tmp_path / "session.jsonl"
@@ -256,7 +260,9 @@ class TestCLI:
         # Key name is preserved; the UUID value is hashed to a deterministic placeholder
         assert "sessionId" in out
         assert out["sessionId"] != real_uuid
-        assert _UUID_PATTERN.fullmatch(out["sessionId"]), "sessionId should be UUID-shaped after hashing"
+        assert _UUID_PATTERN.fullmatch(out["sessionId"]), (
+            "sessionId should be UUID-shaped after hashing"
+        )
         assert out["cwd"] == "/home/user/[REDACTED]"
 
     def test_output_filename_preserved(self, tmp_path):
@@ -308,6 +314,7 @@ class TestCLI:
 # Dict-key redaction tests
 # ---------------------------------------------------------------------------
 
+
 class TestDictKeyRedaction:
     # Keys are NOT redacted by default; pass redact_keys=True to opt in.
 
@@ -357,14 +364,11 @@ class TestDictKeyRedaction:
 # --skip-malformed flag tests
 # ---------------------------------------------------------------------------
 
+
 class TestSkipMalformed:
     def test_skip_malformed_omits_line(self, tmp_path):
         src = tmp_path / "mixed.jsonl"
-        src.write_text(
-            '{"type": "user"}\n'
-            'not valid json\n'
-            '{"type": "assistant"}\n'
-        )
+        src.write_text('{"type": "user"}\nnot valid json\n{"type": "assistant"}\n')
         out_dir = tmp_path / "out"
         main([str(src), "--output-dir", str(out_dir), "--skip-malformed"])
         out_lines = [l for l in (out_dir / "mixed.jsonl").read_text().splitlines() if l.strip()]
@@ -391,6 +395,7 @@ class TestSkipMalformed:
 # ---------------------------------------------------------------------------
 # --strict flag tests
 # ---------------------------------------------------------------------------
+
 
 class TestStrictFlag:
     def test_strict_returns_nonzero_on_malformed_json(self, tmp_path):
@@ -430,11 +435,7 @@ class TestStrictFlag:
     def test_strict_skips_malformed_line(self, tmp_path):
         """--strict aborts at the first malformed line; no output file is created."""
         src = tmp_path / "mixed.jsonl"
-        src.write_text(
-            '{"type": "user"}\n'
-            'not valid json\n'
-            '{"type": "assistant"}\n'
-        )
+        src.write_text('{"type": "user"}\nnot valid json\n{"type": "assistant"}\n')
         out_dir = tmp_path / "out"
         with pytest.raises(SystemExit) as exc_info:
             main([str(src), "--output-dir", str(out_dir), "--strict"])
@@ -503,6 +504,7 @@ class TestUUIDRedaction:
 # Git branch name redaction tests
 # ---------------------------------------------------------------------------
 
+
 class TestGitBranchRedaction:
     def test_task_branch_is_redacted(self):
         result = _cleaned("claude/clean-feature-t-3c3q")
@@ -566,6 +568,7 @@ class TestGitBranchRedaction:
 # Unicode fallback (malformed-line redaction path)
 # ---------------------------------------------------------------------------
 
+
 class TestUnicodeFallback:
     def test_unicode_escape_preserved_after_redaction(self, tmp_path):
         r"""Non-PII \uXXXX escapes in malformed lines survive as \uXXXX in output."""
@@ -593,6 +596,7 @@ class TestUnicodeFallback:
 # ---------------------------------------------------------------------------
 # Request/message ID hashing tests
 # ---------------------------------------------------------------------------
+
 
 def _expected_req_hash(s: str) -> str:
     """Compute the expected deterministic hash for a request/message ID."""
