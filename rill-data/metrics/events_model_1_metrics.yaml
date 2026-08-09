@@ -1,0 +1,161 @@
+# Metrics view YAML
+# Reference documentation: https://docs.rilldata.com/reference/project-files/metrics-views
+# This file was generated using AI.
+
+version: 1
+type: metrics_view
+
+display_name: Events (events_model_1) Metrics
+connector: duckdb
+model: events
+timeseries: timestamp
+
+dimensions:
+  - name: event_id
+    display_name: Event Id
+    column: event_id
+  - name: session_id
+    display_name: Session Id
+    column: session_id
+  - name: source
+    display_name: Source
+    column: source
+  - name: timestamp
+    display_name: Timestamp
+    column: timestamp
+  - name: type
+    display_name: Type
+    column: type
+  - name: subtype
+    display_name: Subtype
+    column: subtype
+  - name: role
+    display_name: Role
+    column: role
+  - name: parent_id
+    display_name: Parent Id
+    column: parent_id
+  - name: message_id
+    display_name: Message Id
+    column: message_id
+  - name: request_id
+    display_name: Request Id
+    column: request_id
+  - name: tool_use_id
+    display_name: Tool Use Id
+    column: tool_use_id
+  - name: tool_name
+    display_name: Tool Name
+    column: tool_name
+  - name: model
+    display_name: Model
+    column: model
+  - name: cwd
+    display_name: Cwd
+    column: cwd
+  - name: git_branch
+    display_name: Git Branch
+    column: git_branch
+  - name: repository
+    display_name: Repository
+    column: repository
+  - name: file_path
+    display_name: File Path
+    column: file_path
+  - name: file_ext
+    display_name: File Ext
+    column: file_ext
+  - name: pr_url
+    display_name: Pr Url
+    column: pr_url
+  - name: pr_action
+    display_name: Pr Action
+    column: pr_action
+  - name: referenced_repository
+    display_name: Referenced Repository
+    column: referenced_repository
+  - name: text
+    display_name: Text
+    column: text
+  - column: pr_number
+    name: pr_number
+    type: categorical
+
+measures:
+  - name: total_events_measure
+    display_name: Total Events
+    expression: COUNT(*)
+    description: Total number of event records.
+    format_preset: humanize
+  - name: unique_sessions_measure
+    display_name: Unique Sessions
+    expression: COUNT(DISTINCT session_id)
+    description: Number of distinct sessions represented in the events.
+    format_preset: humanize
+  - name: unique_requests_measure
+    display_name: Unique Requests
+    expression: COUNT(DISTINCT request_id)
+    description: Number of distinct request IDs.
+    format_preset: humanize
+  - name: unique_messages_measure
+    display_name: Unique Messages
+    expression: COUNT(DISTINCT message_id)
+    description: Number of distinct message IDs.
+    format_preset: humanize
+  - name: total_input_tokens_measure
+    display_name: Total Input Tokens
+    expression: SUM(input_tokens)
+    description: Sum of input tokens across all events.
+    format_preset: humanize
+    valid_percent_of_total: true
+    lower_is_better: false
+  - name: total_output_tokens_measure
+    display_name: Total Output Tokens
+    expression: SUM(output_tokens)
+    description: Sum of output tokens across all events.
+    format_preset: humanize
+    valid_percent_of_total: true
+    lower_is_better: false
+  - name: avg_input_tokens_measure
+    display_name: Average Input Tokens
+    expression: AVG(input_tokens)
+    description: Average input tokens per event.
+    format_preset: humanize
+  - name: avg_output_tokens_measure
+    display_name: Average Output Tokens
+    expression: AVG(output_tokens)
+    description: Average output tokens per event.
+    format_preset: humanize
+  - name: total_inferred_cost_measure
+    display_name: Total Inferred Cost
+    expression: SUM(inferred_cost)
+    description: Total inferred cost across all events.
+    format_preset: currency_usd
+    valid_percent_of_total: true
+    lower_is_better: false
+  - name: total_lines_changed_measure
+    display_name: Total Lines Changed
+    expression: SUM(lines_added + lines_removed)
+    description: Total code churn measured as lines added plus lines removed across
+      all events.
+    format_preset: humanize
+  - expression: SUM(lines_added)
+    name: sum_of_lines_added
+    format_preset: humanize
+    valid_percent_of_total: true
+    lower_is_better: false
+    display_name: Lines Added
+  - expression: SUM(-1 * lines_removed)
+    name: sum_of_lines_removed
+    format_preset: humanize
+    valid_percent_of_total: true
+    lower_is_better: false
+    display_name: Lines Removed
+  - expression: SUM(lines_added - lines_removed)
+    name: sum_net_of_lines_changed
+    display_name: Lines Changed (Net)
+    format_preset: humanize
+    valid_percent_of_total: true
+    lower_is_better: false
+database: sessions
+database_schema: main

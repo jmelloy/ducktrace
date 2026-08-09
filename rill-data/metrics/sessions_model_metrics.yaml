@@ -1,0 +1,116 @@
+# Metrics view YAML
+# Reference documentation: https://docs.rilldata.com/reference/project-files/metrics-views
+# This file was generated using AI.
+
+version: 1
+type: metrics_view
+
+display_name: Sessions Model
+connector: duckdb
+model: sessions
+timeseries: started_at
+
+dimensions:
+  - name: session_id
+    display_name: Session Id
+    column: session_id
+  - name: source
+    display_name: Source
+    column: source
+  - name: title
+    display_name: Title
+    column: title
+  - name: file_path
+    display_name: File Path
+    column: file_path
+  - name: started_at
+    display_name: Started At
+    column: started_at
+  - name: ended_at
+    display_name: Ended At
+    column: ended_at
+  - name: cwd
+    display_name: Cwd
+    column: cwd
+  - name: repository
+    display_name: Repository
+    column: repository
+  - name: repository_url
+    display_name: Repository Url
+    column: repository_url
+  - name: git_branch
+    display_name: Git Branch
+    column: git_branch
+  - name: git_commit
+    display_name: Git Commit
+    column: git_commit
+  - name: model
+    display_name: Model
+    column: model
+  - name: cli_version
+    display_name: Cli Version
+    column: cli_version
+  - name: originator
+    display_name: Originator
+    column: originator
+  - name: model_provider
+    display_name: Model Provider
+    column: model_provider
+
+measures:
+  - name: session_count_measure
+    display_name: Session Count
+    expression: COUNT(*)
+    description: Total number of sessions.
+    format_preset: humanize
+  - name: total_duration_sec_measure
+    display_name: Total Duration (sec)
+    expression: SUM(duration_sec)
+    description: Sum of session durations in seconds.
+    format_preset: humanize
+  - name: average_duration_sec_measure
+    display_name: Average Duration (sec)
+    expression: AVG(duration_sec)
+    description: Average session duration in seconds.
+    format_preset: humanize
+  - name: total_events_measure
+    display_name: Total Events
+    expression: SUM(event_count)
+    description: Total number of events across sessions.
+    format_preset: humanize
+  - name: total_messages_measure
+    display_name: Total Messages
+    expression: SUM(message_count)
+    description: Total number of messages across sessions.
+    format_preset: humanize
+  - name: total_tool_calls_measure
+    display_name: Total Tool Calls
+    expression: SUM(tool_call_count)
+    description: Total number of tool calls across sessions.
+    format_preset: humanize
+  - name: total_tokens
+    display_name: Total Tokens
+    expression: SUM(total_tokens)
+    description: Total tokens consumed across sessions.
+    format_preset: humanize
+  - name: average_total_tokens_measure
+    display_name: Average Tokens per Session
+    expression: AVG(total_tokens)
+    description: Average total tokens consumed per session.
+    format_preset: humanize
+  - name: total_inferred_cost_measure
+    display_name: Total Inferred Cost
+    expression: SUM(inferred_cost)
+    description: Sum of inferred cost across sessions.
+    format_preset: currency_usd
+    valid_percent_of_total: true
+    lower_is_better: false
+  - name: total_stated_cost_measure
+    display_name: Total Stated Cost
+    expression: SUM(stated_cost)
+    description: Sum of stated cost across sessions.
+    format_preset: currency_usd
+    valid_percent_of_total: true
+    lower_is_better: false
+database: sessions
+database_schema: main

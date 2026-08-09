@@ -103,6 +103,21 @@ locations are auto-discovered (`~/.claude/projects`, `~/.config/claude/projects`
 `CLAUDE_ANALYSIS_CLAUDE_PATH` / `CLAUDE_ANALYSIS_CODEX_PATH` /
 `CLAUDE_ANALYSIS_PI_PATH` (comma-separated).
 
+## Dashboards (Rill)
+
+`rill-data/` is a [Rill](https://docs.rilldata.com) project (metrics views +
+canvas dashboards) reading the DuckDB store directly.
+
+```bash
+brew install rilldata/tap/rill   # or: curl https://rill.sh | sh
+rill start rill-data             # opens http://localhost:9009
+```
+
+The `rill-data/connectors/duckdb.yaml` path points at
+`data/sessions.duckdb` — edit it if your store lives elsewhere. Rill takes a
+DuckDB write lock, so stop `rill` before re-running `build_db.py` (or point Rill
+at a copy).
+
 ## Tables
 
 `sessions` (one row per session): `session_id`, `source`, `title`, `file_path`,
