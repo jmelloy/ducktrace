@@ -63,7 +63,11 @@ def _message_text(content) -> str:
 def _reasoning_text(summary) -> str:
     if not isinstance(summary, list):
         return ""
-    parts = [s.get("text", "") for s in summary if isinstance(s, dict) and s.get("type") == "summary_text"]
+    parts = [
+        s.get("text", "")
+        for s in summary
+        if isinstance(s, dict) and s.get("type") == "summary_text"
+    ]
     return "\n".join(p for p in parts if p)
 
 
@@ -228,7 +232,12 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["attributes"] = entry
                 events.append(ev)
 
-            elif sub in ("function_call", "custom_tool_call", "local_shell_call", "web_search_call"):
+            elif sub in (
+                "function_call",
+                "custom_tool_call",
+                "local_shell_call",
+                "web_search_call",
+            ):
                 name = payload.get("name") or sub
                 if name == "apply_patch":
                     files = parse_apply_patch(_patch_text(payload))
@@ -252,7 +261,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                 ev["role"] = "tool_use"
                 ev["tool_name"] = name
                 ev["tool_use_id"] = call_id
-                ev["text"] = payload.get("arguments") or payload.get("input") or f"Tool call: {name}"
+                ev["text"] = (
+                    payload.get("arguments") or payload.get("input") or f"Tool call: {name}"
+                )
                 ev["attributes"] = entry
                 events.append(ev)
 
@@ -299,7 +310,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
     # resolve repository once, stamp every event. Codex's git remote (from
     # session_meta) is authoritative; otherwise fall back to the cwd reconciled
     # with mined owner/repo references, most-frequent first.
-    ref_counts = Counter(ev["referenced_repository"] for ev in events if ev.get("referenced_repository"))
+    ref_counts = Counter(
+        ev["referenced_repository"] for ev in events if ev.get("referenced_repository")
+    )
     candidates = [r for r, _ in ref_counts.most_common()]
     repository = resolve_session_repository(
         candidate_repositories=candidates,
@@ -359,6 +372,7 @@ def _attach_codex_tokens(ev: dict, payload: dict, model: str, last_total: dict |
     if last_total is None:
         d_in, d_out, d_cc, d_cr, d_reason = cur_in, cur_out, cur_cc, cur_cr, cur_reason
     else:
+
         def prev(k, *alts):
             v = last_total.get(k)
             if v is None:
@@ -367,6 +381,7 @@ def _attach_codex_tokens(ev: dict, payload: dict, model: str, last_total: dict |
                         return last_total[a]
                 return 0
             return v
+
         d_in = cur_in - prev("input_tokens")
         d_out = cur_out - prev("output_tokens")
         d_cc = cur_cc - prev("cache_creation_input_tokens")

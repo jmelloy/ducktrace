@@ -28,11 +28,12 @@ def _table(con, sql, headers, fmts=None, params=None):
     widths = [max(len(h), *(len(c[i]) for c in cells)) for i, h in enumerate(headers)]
     # right-align numeric-looking columns (those whose fmt has alignment digits or commas)
     numeric = [any(tok in fmts[i] for tok in (",", ".", ">")) for i in range(len(headers))]
+
     def fmt_row(vals):
         return "  ".join(
-            (v.rjust(widths[i]) if numeric[i] else v.ljust(widths[i]))
-            for i, v in enumerate(vals)
+            (v.rjust(widths[i]) if numeric[i] else v.ljust(widths[i])) for i, v in enumerate(vals)
         )
+
     print("  " + fmt_row(headers))
     print("  " + "  ".join("-" * w for w in widths))
     for c in cells:
@@ -62,57 +63,71 @@ def main() -> None:
     print(f"  Cost (USD) : ${cost:,.2f}")
 
     _rule("BY SOURCE")
-    _table(con,
+    _table(
+        con,
         """SELECT source, count(*), sum(event_count), sum(total_tokens), sum(coalesce(stated_cost, inferred_cost))
            FROM sessions GROUP BY 1 ORDER BY 5 DESC""",
         ["source", "sessions", "events", "tokens", "cost $"],
-        ["{}", "{:,}", "{:,}", "{:,}", "{:,.2f}"])
+        ["{}", "{:,}", "{:,}", "{:,}", "{:,.2f}"],
+    )
 
     _rule("TOP REPOSITORIES (by cost)")
-    _table(con,
+    _table(
+        con,
         """SELECT coalesce(repository,'(unknown)'), count(*), sum(total_tokens), sum(coalesce(stated_cost, inferred_cost))
            FROM sessions GROUP BY 1 ORDER BY 4 DESC LIMIT 15""",
         ["repository", "sessions", "tokens", "cost $"],
-        ["{}", "{:,}", "{:,}", "{:,.2f}"])
+        ["{}", "{:,}", "{:,}", "{:,.2f}"],
+    )
 
     _rule("BY MODEL")
-    _table(con,
+    _table(
+        con,
         """SELECT coalesce(model,'(unknown)'), count(*), sum(total_tokens), sum(coalesce(stated_cost, inferred_cost))
            FROM sessions WHERE model IS NOT NULL AND model <> '' GROUP BY 1 ORDER BY 4 DESC""",
         ["model", "sessions", "tokens", "cost $"],
-        ["{}", "{:,}", "{:,}", "{:,.2f}"])
+        ["{}", "{:,}", "{:,}", "{:,.2f}"],
+    )
 
     _rule("COST BY DAY (last 14 active days)")
-    _table(con,
+    _table(
+        con,
         """SELECT cast(started_at AS DATE) d, count(*), sum(total_tokens), sum(coalesce(stated_cost, inferred_cost))
            FROM sessions WHERE started_at IS NOT NULL
            GROUP BY 1 ORDER BY 1 DESC LIMIT 14""",
         ["day", "sessions", "tokens", "cost $"],
-        ["{}", "{:,}", "{:,}", "{:,.2f}"])
+        ["{}", "{:,}", "{:,}", "{:,.2f}"],
+    )
 
     _rule("FILE EDITS BY TYPE")
-    _table(con,
+    _table(
+        con,
         """SELECT file_ext, count(*), sum(lines_added), sum(lines_removed)
            FROM events WHERE role='tool_use' AND file_path IS NOT NULL
            GROUP BY 1 ORDER BY 2 DESC LIMIT 12""",
         ["ext", "edits", "+lines", "-lines"],
-        ["{}", "{:,}", "{:,}", "{:,}"])
+        ["{}", "{:,}", "{:,}", "{:,}"],
+    )
 
     _rule("TOP TOOLS")
-    _table(con,
+    _table(
+        con,
         """SELECT source, tool_name, count(*)
            FROM events WHERE role='tool_use' AND tool_name IS NOT NULL
            GROUP BY 1,2 ORDER BY 3 DESC LIMIT 12""",
         ["source", "tool", "calls"],
-        ["{}", "{}", "{:,}"])
+        ["{}", "{}", "{:,}"],
+    )
 
     _rule("TOP SESSIONS (by cost)")
-    _table(con,
+    _table(
+        con,
         """SELECT coalesce(title,'(untitled)'), source, coalesce(repository,''),
                   message_count, round(coalesce(stated_cost, inferred_cost),2)
            FROM sessions ORDER BY coalesce(stated_cost, inferred_cost) DESC LIMIT 15""",
         ["title", "src", "repository", "msgs", "cost $"],
-        ["{:.40}", "{}", "{:.28}", "{:,}", "{:,.2f}"])
+        ["{:.40}", "{}", "{:.28}", "{:,}", "{:,.2f}"],
+    )
 
     print()
     con.close()

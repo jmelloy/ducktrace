@@ -120,8 +120,10 @@ def _find_model_cost(model_id: str) -> Optional[dict]:
             out = cost.get("output") if cost else None
             if (
                 cost
-                and isinstance(inp, (int, float)) and inp > 0
-                and isinstance(out, (int, float)) and out > 0
+                and isinstance(inp, (int, float))
+                and inp > 0
+                and isinstance(out, (int, float))
+                and out > 0
             ):
                 return cost
     return None

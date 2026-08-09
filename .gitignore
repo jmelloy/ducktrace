@@ -12,6 +12,7 @@ data/
 *.duckdb
 *.duckdb.wal
 *.ducklake
+rill-data/
 
 # Local tooling / secrets
 .claude/settings.local.json

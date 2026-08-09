@@ -29,46 +29,46 @@ from .text_filter import shrink_event, shrink_session
 EVENT_COLUMNS: dict[str, str] = {
     "event_id": "VARCHAR",
     "session_id": "VARCHAR",
-    "source": "VARCHAR",            # 'claude' | 'codex'
-    "seq": "INTEGER",               # line number within the session file (1-based)
-    "block_index": "INTEGER",       # content-block index within the line (0-based)
+    "source": "VARCHAR",  # 'claude' | 'codex'
+    "seq": "INTEGER",  # line number within the session file (1-based)
+    "block_index": "INTEGER",  # content-block index within the line (0-based)
     "timestamp": "TIMESTAMP",
-    "type": "VARCHAR",              # top-level entry type
-    "subtype": "VARCHAR",           # content-block / payload subtype
-    "role": "VARCHAR",              # user | assistant | tool_use | tool_result | system | reasoning | ...
-    "parent_id": "VARCHAR",         # parentUuid (claude) / linking id
-    "message_id": "VARCHAR",        # message.id (claude) / messageId
-    "request_id": "VARCHAR",        # requestId (claude)
-    "tool_use_id": "VARCHAR",       # tool_use id / tool_use_id / call_id  (links call<->result)
+    "type": "VARCHAR",  # top-level entry type
+    "subtype": "VARCHAR",  # content-block / payload subtype
+    "role": "VARCHAR",  # user | assistant | tool_use | tool_result | system | reasoning | ...
+    "parent_id": "VARCHAR",  # parentUuid (claude) / linking id
+    "message_id": "VARCHAR",  # message.id (claude) / messageId
+    "request_id": "VARCHAR",  # requestId (claude)
+    "tool_use_id": "VARCHAR",  # tool_use id / tool_use_id / call_id  (links call<->result)
     "tool_name": "VARCHAR",
     "model": "VARCHAR",
     "cwd": "VARCHAR",
     "git_branch": "VARCHAR",
-    "repository": "VARCHAR",        # resolved owner/repo or repo name (session-level)
+    "repository": "VARCHAR",  # resolved owner/repo or repo name (session-level)
     "file_path": "VARCHAR",
     "file_ext": "VARCHAR",
     "lines_added": "INTEGER",
     "lines_removed": "INTEGER",
-    "pr_number": "INTEGER",             # PR this event references (pr-link / mined)
+    "pr_number": "INTEGER",  # PR this event references (pr-link / mined)
     "pr_url": "VARCHAR",
-    "pr_action": "VARCHAR",             # 'pr-link' or 'gh pr <verb>'
-    "referenced_repository": "VARCHAR", # owner/repo mined from --repo / PR URL
+    "pr_action": "VARCHAR",  # 'pr-link' or 'gh pr <verb>'
+    "referenced_repository": "VARCHAR",  # owner/repo mined from --repo / PR URL
     "input_tokens": "BIGINT",
     "calculated_input_tokens": "BIGINT",
     "output_tokens": "BIGINT",
     "cache_read_tokens": "BIGINT",
     "cache_creation_tokens": "BIGINT",
     "reasoning_tokens": "BIGINT",
-    "stated_cost": "DOUBLE",        # costUSD if present, else computed from calculated_input_tokens
-    "inferred_cost": "DOUBLE",      # computed from raw input_tokens (usage payload)
-    "text": "VARCHAR",              # extracted body/text (may be large)
-    "attributes": "JSON",           # full raw entry (lossless)
+    "stated_cost": "DOUBLE",  # costUSD if present, else computed from calculated_input_tokens
+    "inferred_cost": "DOUBLE",  # computed from raw input_tokens (usage payload)
+    "text": "VARCHAR",  # extracted body/text (may be large)
+    "attributes": "JSON",  # full raw entry (lossless)
 }
 
 SESSION_COLUMNS: dict[str, str] = {
     "session_id": "VARCHAR",
     "source": "VARCHAR",
-    "title": "VARCHAR",             # manual rename (custom-title) if set, else ai-title
+    "title": "VARCHAR",  # manual rename (custom-title) if set, else ai-title
     "file_path": "VARCHAR",
     "started_at": "TIMESTAMP",
     "ended_at": "TIMESTAMP",
@@ -93,11 +93,11 @@ SESSION_COLUMNS: dict[str, str] = {
     "cache_creation_tokens": "BIGINT",
     "reasoning_tokens": "BIGINT",
     "total_tokens": "BIGINT",
-    "stated_cost": "DOUBLE",        # sum of stated_cost across events
-    "inferred_cost": "DOUBLE",      # sum of inferred_cost across events
-    "pr_repositories": "JSON",      # list of owner/repo seen via pr-link
-    "pr_numbers": "JSON",           # list of PR numbers
-    "attributes": "JSON",           # extra session metadata (worktree, cwd_counts, …)
+    "stated_cost": "DOUBLE",  # sum of stated_cost across events
+    "inferred_cost": "DOUBLE",  # sum of inferred_cost across events
+    "pr_repositories": "JSON",  # list of owner/repo seen via pr-link
+    "pr_numbers": "JSON",  # list of PR numbers
+    "attributes": "JSON",  # extra session metadata (worktree, cwd_counts, …)
 }
 
 _JSON_COLS = {"attributes", "pr_repositories", "pr_numbers"}
@@ -231,8 +231,12 @@ class Store:
             if self.pop_used:
                 pop_used_event(ev)
             self._event_buf.append(
-                shrink_event(ev, max_text=self.max_text, max_field=self.max_field,
-                             keep_full=self.keep_full_text)
+                shrink_event(
+                    ev,
+                    max_text=self.max_text,
+                    max_field=self.max_field,
+                    keep_full=self.keep_full_text,
+                )
             )
         if len(self._event_buf) >= self.batch_size:
             self.flush()
@@ -280,8 +284,12 @@ class Store:
             canonical = max(group, key=lambda v: (v[1], any(c.isupper() for c in v[0])))[0]
             for full, _ in group:
                 if full != canonical:
-                    self.con.execute("UPDATE sessions SET repository=? WHERE repository=?", [canonical, full])
-                    self.con.execute("UPDATE events SET repository=? WHERE repository=?", [canonical, full])
+                    self.con.execute(
+                        "UPDATE sessions SET repository=? WHERE repository=?", [canonical, full]
+                    )
+                    self.con.execute(
+                        "UPDATE events SET repository=? WHERE repository=?", [canonical, full]
+                    )
                     applied.append((full, canonical))
 
         # repo-part (segment after the slash) -> owner/repo, only when unique.
@@ -304,7 +312,9 @@ class Store:
                         target = canon[seg]
                         break
             if target and target != repo:
-                self.con.execute("UPDATE sessions SET repository=? WHERE session_id=?", [target, sid])
+                self.con.execute(
+                    "UPDATE sessions SET repository=? WHERE session_id=?", [target, sid]
+                )
                 self.con.execute("UPDATE events SET repository=? WHERE session_id=?", [target, sid])
                 applied.append((repo, target))
         return applied

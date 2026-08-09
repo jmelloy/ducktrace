@@ -264,7 +264,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
                         ev["lines_added"] = added
                         ev["lines_removed"] = removed
                     args = block.get("arguments")
-                    ev["text"] = json.dumps(args, default=str) if args is not None else f"Tool call: {name}"
+                    ev["text"] = (
+                        json.dumps(args, default=str) if args is not None else f"Tool call: {name}"
+                    )
                 else:  # text or anything else
                     ev["subtype"] = "text"
                     ev["role"] = "assistant"
@@ -320,7 +322,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         if found["repos"]:
             ev["referenced_repository"] = found["repos"][0]
 
-    ref_counts = Counter(ev["referenced_repository"] for ev in events if ev.get("referenced_repository"))
+    ref_counts = Counter(
+        ev["referenced_repository"] for ev in events if ev.get("referenced_repository")
+    )
     candidates = [r for r, _ in ref_counts.most_common()]
     repository = resolve_session_repository(
         candidate_repositories=candidates,
@@ -330,7 +334,9 @@ def parse_file(path: str) -> tuple[dict, list[dict]] | None:
         ev["repository"] = repository
 
     main_model = max(model_counts, key=model_counts.get) if model_counts else current_model
-    main_provider = max(provider_counts, key=provider_counts.get) if provider_counts else current_provider
+    main_provider = (
+        max(provider_counts, key=provider_counts.get) if provider_counts else current_provider
+    )
 
     meta = {
         "session_id": session_id,

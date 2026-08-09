@@ -9,7 +9,11 @@ from __future__ import annotations
 
 def aggregate_session(session_id: str, path: str, source: str, events: list[dict], **meta) -> dict:
     def _sum(col):
-        l = [ev.get(col) for ev in events if ev.get(col) is not None and isinstance(ev.get(col), (int, float))]
+        l = [
+            ev.get(col)
+            for ev in events
+            if ev.get(col) is not None and isinstance(ev.get(col), (int, float))
+        ]
         if not l:
             return None
         return sum(l)
@@ -25,12 +29,15 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
     # than collect seq, because seq is per-file and collides when a session spans
     # multiple files (sub-agents, resumes).
     message_count = sum(
-        1 for ev in events
+        1
+        for ev in events
         if (ev.get("block_index") or 0) == 0
         and (ev.get("type") in ("user", "assistant") or ev.get("role") in ("user", "assistant"))
     )
     tool_calls = sum(1 for ev in events if ev.get("role") == "tool_use")
-    files = {ev["file_path"] for ev in events if ev.get("file_path") and ev.get("role") == "tool_use"}
+    files = {
+        ev["file_path"] for ev in events if ev.get("file_path") and ev.get("role") == "tool_use"
+    }
 
     inp, out = _sum("input_tokens") or 0, _sum("output_tokens") or 0
     calc_inp = _sum("calculated_input_tokens") or 0
@@ -85,6 +92,8 @@ def aggregate_session(session_id: str, path: str, source: str, events: list[dict
         "inferred_cost": _sum("inferred_cost"),
         "pr_repositories": sorted(pr_repos),
         "pr_numbers": sorted(pr_nums),
-        "attributes": {**meta.get("extra_attributes", {}),
-                       **({"pr_actions": sorted(pr_actions)} if pr_actions else {})},
+        "attributes": {
+            **meta.get("extra_attributes", {}),
+            **({"pr_actions": sorted(pr_actions)} if pr_actions else {}),
+        },
     }

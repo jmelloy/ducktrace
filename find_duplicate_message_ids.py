@@ -57,7 +57,7 @@ def main() -> None:
                 out = ev.get("output_tokens")
                 print(f"    event_id={ev['event_id']}  input_tokens={inp}  output_tokens={out}")
 
-    print(f"\n{'='*60}", file=sys.stderr)
+    print(f"\n{'=' * 60}", file=sys.stderr)
     if found:
         print(f"Found {found} session(s) with duplicate message_ids.", file=sys.stderr)
     else:
